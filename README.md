@@ -1,2 +1,2 @@
-# cockroach-go
-Packages for go clients.
+# testing
+Testing helpers for cockroach clients.
