@@ -14,15 +14,19 @@
 //
 // Author: Marc Berhault (marc@cockroachlabs.com)
 
-package testserver
+package testserver_test
 
 import (
+	"database/sql"
 	"testing"
-	"time"
+
+	// Needed for postgres driver test.
+	"github.com/cockroachdb/cockroach-go/testserver"
+	_ "github.com/lib/pq"
 )
 
 func TestRunServer(t *testing.T) {
-	ts, err := NewTestServer()
+	ts, err := testserver.NewTestServer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,24 +37,20 @@ func TestRunServer(t *testing.T) {
 	}
 	defer ts.Stop()
 
-	url := ts.WaitForPGURL(time.Second)
+	url := ts.PGURL()
 	if url == nil {
 		t.Fatalf("url not found")
 	}
 	t.Logf("URL: %s", url.String())
-}
 
-func TestBinaryPaths(t *testing.T) {
-	t.Logf("binaryName: %s", binaryName())
-	t.Logf("latestMarkerURL: %s", latestMarkerURL())
-	sha, err := findLatestSha()
+	db, err := sql.Open("postgres", url.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("latestSha: %s", sha)
-	filename, err := downloadLatestBinary()
+	defer func() { _ = db.Close() }()
+
+	_, err = db.Exec("SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("downloaded: %s", filename)
 }
