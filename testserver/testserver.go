@@ -23,8 +23,7 @@
 // ts, err := testserver.NewTestServer()
 // err = ts.Start()
 // defer ts.Stop()
-// url := ts.WaitForPGURL()
-// // Check for nil, and make use of URL.
+// url := ts.PGURL()
 //
 // To use, run as follows:
 //   import "github.com/cockroachdb/cockroach-go/testserver"
@@ -42,7 +41,7 @@
 //      }
 //      defer ts.Stop()
 //
-//      url := ts.WaitForPGURL(time.Second)
+//      url := ts.PGURL()
 //      if url != nil {
 //        t.FatalF("url not found")
 //      }
@@ -79,6 +78,9 @@ const (
 	stateRunning = iota
 	stateStopped = iota
 	stateFailed  = iota
+
+	socketPort     = 26257
+	socketFileBase = ".s.PGSQL"
 )
 
 // TestServer is a helper to run a real cockroach node.
@@ -86,7 +88,7 @@ type TestServer struct {
 	mu        sync.RWMutex
 	state     int
 	baseDir   string
-	pgurl     *url.URL
+	pgURL     *url.URL
 	cmd       *exec.Cmd
 	args      []string
 	stdout    string
@@ -108,7 +110,9 @@ func NewTestServer() (*TestServer, error) {
 		cockroachBinary = "cockroach"
 	}
 
-	baseDir, err := ioutil.TempDir("", "cockroach-testserver")
+	// Force "/tmp/" so avoid OSX's really long temp directory names
+	// which get us over the socket filename length limit.
+	baseDir, err := ioutil.TempDir("/tmp", "cockroach-testserver")
 	if err != nil {
 		return nil, fmt.Errorf("could not create temp directory: %s", err)
 	}
@@ -118,6 +122,17 @@ func NewTestServer() (*TestServer, error) {
 		return nil, fmt.Errorf("could not create logs directory: %s: %s", logDir, err)
 	}
 
+	options := url.Values{
+		"host": []string{baseDir},
+	}
+	pgurl := &url.URL{
+		Scheme:   "postgres",
+		User:     url.User("root"),
+		Host:     fmt.Sprintf(":%d", socketPort),
+		RawQuery: options.Encode(),
+	}
+	socketPath := filepath.Join(baseDir, fmt.Sprintf("%s.%d", socketFileBase, socketPort))
+
 	args := []string{
 		cockroachBinary,
 		"start",
@@ -125,11 +140,13 @@ func NewTestServer() (*TestServer, error) {
 		"--insecure",
 		"--port=0",
 		"--http-port=0",
+		"--socket=" + socketPath,
 		"--store=" + baseDir,
 	}
 
 	ts := &TestServer{
 		baseDir: baseDir,
+		pgURL:   pgurl,
 		args:    args,
 		stdout:  filepath.Join(logDir, "cockroach.stdout"),
 		stderr:  filepath.Join(logDir, "cockroach.stderr"),
@@ -147,35 +164,18 @@ func (ts *TestServer) Stderr() string {
 	return ts.stderrBuf.String()
 }
 
-// findPGURL parses the node's stdout log for the postgres URL.
-func (ts *TestServer) findPGURL() (*url.URL, error) {
-	match := sqlURLRegexp.FindStringSubmatch(ts.Stdout())
-	if match == nil {
-		return nil, fmt.Errorf("sql url not found in stdout")
-	}
-	if len(match) != 2 {
-		return nil, fmt.Errorf("bad match for sql url in stdout: %v", match)
-	}
-	u := match[1]
-	ret, err := url.Parse(u)
-	if err != nil {
-		return nil, fmt.Errorf("problem parsing url %s: %s", u, err)
-	}
-	return ret, nil
-}
-
-// WaitForPGURL waits until the postgres URL has been found, or the process
-// is no longer running.
-// If no URL has been found after `timeout` amount of time, it returns nil.
-func (ts *TestServer) WaitForPGURL(timeout time.Duration) *url.URL {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		ts.mu.RLock()
-		ret := ts.pgurl
-		ts.mu.RUnlock()
-		if ret != nil {
-			return ret
+// PGURL returns the postgres connection URL to reach the started
+// cockroach node.
+// It loops until the expected unix socket file exists.
+// TODO(marc): should we add a timeout, or just let the test
+// framework take care of it?
+func (ts *TestServer) PGURL() *url.URL {
+	socketPath := filepath.Join(ts.baseDir, fmt.Sprintf("%s.%d", socketFileBase, socketPort))
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			return ts.pgURL
 		}
+		time.Sleep(time.Millisecond * 10)
 	}
 	return nil
 }
@@ -253,27 +253,6 @@ func (ts *TestServer) Start() error {
 		ts.mu.Unlock()
 	}()
 
-	// PGURL watcher.
-	go func() {
-		for {
-			ts.mu.RLock()
-			if ts.pgurl != nil || ts.state != stateRunning {
-				// Either we found the url already, or we're not running: break.
-				ts.mu.RUnlock()
-				return
-			}
-			ts.mu.RUnlock()
-
-			pgurl, err := ts.findPGURL()
-			if err == nil {
-				ts.mu.Lock()
-				ts.pgurl = pgurl
-				ts.mu.Unlock()
-				return
-			}
-			time.Sleep(time.Millisecond * 10)
-		}
-	}()
 	return nil
 }
 
