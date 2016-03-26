@@ -55,6 +55,7 @@
 package testserver
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -68,6 +69,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"testing"
 	"time"
 )
 
@@ -95,6 +97,37 @@ type TestServer struct {
 	stderr    string
 	stdoutBuf logWriter
 	stderrBuf logWriter
+}
+
+// NewDBForTest creates a new CockroachDB TestServer instance and
+// opens a SQL database connection to it. Returns a sql *DB instance a
+// shutdown function. The caller is responsible for executing the
+// returned shutdown function on exit.
+func NewDBForTest(t *testing.T) (*sql.DB, func()) {
+	ts, err := NewTestServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ts.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	url := ts.PGURL()
+	if url == nil {
+		t.Fatalf("url not found")
+	}
+
+	db, err := sql.Open("postgres", url.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return db, func() {
+		_ = db.Close()
+		ts.Stop()
+	}
 }
 
 // NewTestServer creates a new TestServer, but does not start it.
