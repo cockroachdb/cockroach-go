@@ -193,6 +193,7 @@ func (ts *TestServer) Start() error {
 	ts.mu.Unlock()
 
 	ts.cmd = exec.Command(ts.args[0], ts.args[1:]...)
+	ts.cmd.Env = []string{"COCKROACH_MAX_OFFSET=1ns"}
 
 	if len(ts.stdout) > 0 {
 		wr, err := newFileLogWriter(ts.stdout)
