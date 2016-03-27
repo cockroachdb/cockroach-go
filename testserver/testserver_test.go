@@ -17,7 +17,6 @@
 package testserver_test
 
 import (
-	"database/sql"
 	"testing"
 
 	// Needed for postgres driver test.
@@ -26,30 +25,10 @@ import (
 )
 
 func TestRunServer(t *testing.T) {
-	ts, err := testserver.NewTestServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	db, stop := testserver.NewDBForTest(t)
+	defer stop()
 
-	err = ts.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ts.Stop()
-
-	url := ts.PGURL()
-	if url == nil {
-		t.Fatalf("url not found")
-	}
-	t.Logf("URL: %s", url.String())
-
-	db, err := sql.Open("postgres", url.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-
-	_, err = db.Exec("SELECT 1")
+	_, err := db.Exec("SELECT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
