@@ -14,7 +14,7 @@
 //
 // Author: Spencer Kimball (spencer@cockroachlabs.com)
 
-package cdb
+package crdb
 
 import (
 	"database/sql"

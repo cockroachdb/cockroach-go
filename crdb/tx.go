@@ -14,9 +14,9 @@
 //
 // Author: Andrei Matei (andrei@cockroachlabs.com)
 
-// Package cdb provides helpers for using CockroachDB in client
+// Package crdb provides helpers for using CockroachDB in client
 // applications.
-package cdb
+package crdb
 
 import (
 	"database/sql"
