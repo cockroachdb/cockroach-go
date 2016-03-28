@@ -124,6 +124,8 @@ func NewDBForTest(t *testing.T) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
+	ts.WaitForInit(db)
+
 	return db, func() {
 		_ = db.Close()
 		ts.Stop()
@@ -200,8 +202,7 @@ func (ts *TestServer) Stderr() string {
 // PGURL returns the postgres connection URL to reach the started
 // cockroach node.
 // It loops until the expected unix socket file exists.
-// TODO(marc): should we add a timeout, or just let the test
-// framework take care of it?
+// This does not timeout, relying instead on test timeouts.
 func (ts *TestServer) PGURL() *url.URL {
 	socketPath := filepath.Join(ts.baseDir, fmt.Sprintf("%s.%d", socketFileBase, socketPort))
 	for {
@@ -211,6 +212,21 @@ func (ts *TestServer) PGURL() *url.URL {
 		time.Sleep(time.Millisecond * 10)
 	}
 	return nil
+}
+
+// WaitForInit repeatedly looks up the list of databases until
+// the "system" database exists. It ignores all errors as we are
+// waiting for the process to start and complete initialization.
+// This does not timeout, relying instead on test timeouts.
+func (ts *TestServer) WaitForInit(db *sql.DB) {
+	for {
+		// We issue a query that fails both on connection errors and on the
+		// system database not existing.
+		if _, err := db.Query("SHOW DATABASES"); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
 }
 
 // Start runs the process, returning an error on any problems,

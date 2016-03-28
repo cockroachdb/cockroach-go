@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
-	awsBaseURL      = "https://s3.amazonaws.com/cockroach/cockroach"
-	latestSuffix    = "LATEST"
-	localBinaryPath = "/var/tmp"
+	awsBaseURL       = "https://s3.amazonaws.com/cockroach/cockroach"
+	latestSuffix     = "LATEST"
+	localBinaryPath  = "/var/tmp"
+	finishedFileMode = 0555
 )
 
 func binaryName() string {
@@ -61,7 +63,7 @@ func findLatestSha() (string, error) {
 }
 
 func downloadFile(url, filePath string) error {
-	output, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0200)
 	if err != nil {
 		return fmt.Errorf("error creating %s: %s", filePath, "-", err)
 	}
@@ -82,7 +84,9 @@ func downloadFile(url, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("problem downloading %s to %s: %s", url, filePath, err)
 	}
-	return nil
+
+	// Download was successful, add the rw bits.
+	return os.Chmod(filePath, finishedFileMode)
 }
 
 func downloadLatestBinary() (string, error) {
@@ -92,9 +96,17 @@ func downloadLatestBinary() (string, error) {
 	}
 
 	localFile := binaryPath(sha)
-	if _, err := os.Stat(localFile); err == nil {
-		// File already present.
-		return localFile, nil
+	for {
+		finfo, err := os.Stat(localFile)
+		if err != nil {
+			// File does not exist: download it.
+			break
+		}
+		// File already present: check mode.
+		if finfo.Mode().Perm() == finishedFileMode {
+			return localFile, nil
+		}
+		time.Sleep(time.Millisecond * 10)
 	}
 
 	err = downloadFile(binaryURL(sha), localFile)
