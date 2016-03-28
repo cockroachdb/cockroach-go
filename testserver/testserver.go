@@ -104,6 +104,15 @@ type TestServer struct {
 // shutdown function. The caller is responsible for executing the
 // returned shutdown function on exit.
 func NewDBForTest(t *testing.T) (*sql.DB, func()) {
+	return NewDBForTestWithDatabase(t, "")
+}
+
+// NewDBForTestWithDatabase creates a new CockroachDB TestServer
+// instance and opens a SQL database connection to it. If database is
+// specified, the returned connection will explicitly connect to
+// it. Returns a sql *DB instance a shutdown function. The caller is
+// responsible for executing the returned shutdown function on exit.
+func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 	ts, err := NewTestServer()
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +126,9 @@ func NewDBForTest(t *testing.T) (*sql.DB, func()) {
 	url := ts.PGURL()
 	if url == nil {
 		t.Fatalf("url not found")
+	}
+	if len(database) > 0 {
+		url.Path = database
 	}
 
 	db, err := sql.Open("postgres", url.String())
