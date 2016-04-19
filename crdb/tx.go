@@ -24,9 +24,19 @@ import (
 	"github.com/cockroachdb/pq"
 )
 
+// AmbiguousCommitError represents an error that left a transaction in an
+// ambiguous state: unclear if it committed or not.
+type AmbiguousCommitError struct {
+	error
+}
+
 // ExecuteTx runs fn inside a transaction and retries it as needed.
 // On non-retryable failures, the transaction is aborted and rolled
 // back; on success, the transaction is committed.
+// There are cases where the state of a transaction is inherently ambiguous: if
+// we err on RELEASE with a communication error it's unclear if the transaction
+// has been committed or not (similar to erroring on COMMIT in other databases).
+// In that case, we return AmbiguousCommitError.
 //
 // For more information about CockroachDB's transaction model see
 // https://cockroachlabs.com/docs/transactions.html.
@@ -42,9 +52,12 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	}
 	defer func() {
 		if err == nil {
-			err = tx.Commit()
+			// Ignore commit errors. The tx has already been committed by RELEASE.
+			_ = tx.Commit()
 		} else {
-			tx.Rollback()
+			// We always need to execute a Rollback() so sql.DB releases the
+			// connection.
+			_ = tx.Rollback()
 		}
 	}()
 	// Specify that we intend to retry this txn in case of CockroachDB retryable
@@ -54,10 +67,12 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	}
 
 	for {
+		released := false
 		err = fn(tx)
 		if err == nil {
 			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
 			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
+			released = true
 			if _, err = tx.Exec("RELEASE SAVEPOINT cockroach_restart"); err == nil {
 				return nil
 			}
@@ -65,6 +80,9 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 		// We got an error; let's see if it's a retryable one and, if so, restart.
 		pqErr, ok := err.(*pq.Error)
 		if retryable := ok && pqErr.Code == "CR000"; !retryable {
+			if released {
+				err = &AmbiguousCommitError{err}
+			}
 			return err
 		}
 		if _, err = tx.Exec("ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
