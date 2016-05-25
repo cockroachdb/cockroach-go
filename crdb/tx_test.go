@@ -19,23 +19,31 @@ package crdb
 import (
 	"database/sql"
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
-
-	"github.com/cockroachdb/cockroach-go/testserver"
+	"time"
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 // TestExecuteTx verifies transaction retry using the classic
 // example of write skew in bank account balance transfers.
 func TestExecuteTx(t *testing.T) {
-	db, stop := testserver.NewDBForTest(t)
-	defer stop()
+	db, err := sql.Open("postgres", "postgres://root@localhost:26257?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	initStmt := `
-CREATE DATABASE d;
-CREATE TABLE d.t (acct INT PRIMARY KEY, balance INT);
-INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
-`
+	dbName := fmt.Sprintf("db%d", rand.Int())
+
+	initStmt := fmt.Sprintf(`
+CREATE DATABASE %[1]s;
+CREATE TABLE %[1]s.t (acct INT PRIMARY KEY, balance INT);
+INSERT INTO %[1]s.t (acct, balance) VALUES (1, 100), (2, 100);
+`, dbName)
 	if _, err := db.Exec(initStmt); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +54,8 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 
 	getBalances := func(q queryI) (bal1, bal2 int, err error) {
 		var rows *sql.Rows
-		rows, err = q.Query(`SELECT balance FROM d.t WHERE acct IN (1, 2);`)
+		rows, err = q.Query(fmt.Sprintf(
+			`SELECT balance FROM %s.t WHERE acct IN (1, 2);`, dbName))
 		if err != nil {
 			return
 		}
@@ -79,17 +88,17 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 				}
 				// Now, subtract from one account and give to the other.
 				if bal1 > bal2 {
-					if _, err := tx.Exec(`
-UPDATE d.t SET balance=balance-100 WHERE acct=1;
-UPDATE d.t SET balance=balance+100 WHERE acct=2;
-`); err != nil {
+					if _, err := tx.Exec(fmt.Sprintf(`
+UPDATE %[1]s.t SET balance=balance-100 WHERE acct=1;
+UPDATE %[1]s.t SET balance=balance+100 WHERE acct=2;
+`, dbName)); err != nil {
 						return err
 					}
 				} else {
-					if _, err := tx.Exec(`
-UPDATE d.t SET balance=balance+100 WHERE acct=1;
-UPDATE d.t SET balance=balance-100 WHERE acct=2;
-`); err != nil {
+					if _, err := tx.Exec(fmt.Sprintf(`
+UPDATE %[1]s.t SET balance=balance+100 WHERE acct=1;
+UPDATE %[1]s.t SET balance=balance-100 WHERE acct=2;
+`, dbName)); err != nil {
 						return err
 					}
 				}
