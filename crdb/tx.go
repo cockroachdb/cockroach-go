@@ -77,9 +77,12 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 				return nil
 			}
 		}
-		// We got an error; let's see if it's a retryable one and, if so, restart.
+		// We got an error; let's see if it's a retryable one and, if so, restart. We look
+		// for either the standard PG errcode SerializationFailureError:40001 or the Cockroach extension
+		// errcode RetriableError:CR000. The Cockroach extension has been removed server-side, but support
+		// for it has been left here for now to maintain backwards compatibility.
 		pqErr, ok := err.(*pq.Error)
-		if retryable := ok && pqErr.Code == "CR000"; !retryable {
+		if retryable := ok && (pqErr.Code == "CR000" || pqErr.Code == "40001"); !retryable {
 			if released {
 				err = &AmbiguousCommitError{err}
 			}
