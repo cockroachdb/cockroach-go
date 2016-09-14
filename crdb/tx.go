@@ -21,7 +21,7 @@ package crdb
 import (
 	"database/sql"
 
-	"github.com/cockroachdb/pq"
+	"github.com/lib/pq"
 )
 
 // AmbiguousCommitError represents an error that left a transaction in an
