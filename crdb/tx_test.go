@@ -50,14 +50,17 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 		if err != nil {
 			return
 		}
-		for i, bal := range []*int{&bal1, &bal2} {
-			if !rows.Next() {
-				err = fmt.Errorf("expected two balances; got %d", i)
+		defer rows.Close()
+		balances := []*int{&bal1, &bal2}
+		i := 0
+		for ; rows.Next(); i += 1 {
+			if err = rows.Scan(balances[i]); err != nil {
 				return
 			}
-			if err = rows.Scan(bal); err != nil {
-				return
-			}
+		}
+		if i != 2 {
+			err = fmt.Errorf("expected two balances; got %d", i)
+			return
 		}
 		return
 	}
