@@ -223,7 +223,6 @@ func (ts *TestServer) PGURL() *url.URL {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	return nil
 }
 
 // WaitForInit repeatedly looks up the list of databases until

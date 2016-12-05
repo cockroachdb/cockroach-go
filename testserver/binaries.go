@@ -44,7 +44,7 @@ func findLatestSha() (string, error) {
 	markerURL := latestMarkerURL()
 	marker, err := http.Get(markerURL)
 	if err != nil {
-		return "", fmt.Errorf("could not download %s: %s", markerURL)
+		return "", fmt.Errorf("could not download %s: %s", markerURL, err)
 	}
 	if marker.StatusCode == 404 {
 		return "", fmt.Errorf("for 404 from GET %s: make sure OS and ARCH are supported",
@@ -65,7 +65,7 @@ func findLatestSha() (string, error) {
 func downloadFile(url, filePath string) error {
 	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0200)
 	if err != nil {
-		return fmt.Errorf("error creating %s: %s", filePath, "-", err)
+		return fmt.Errorf("error creating %s: %s", filePath, err)
 	}
 	defer output.Close()
 
@@ -98,9 +98,12 @@ func downloadLatestBinary() (string, error) {
 	localFile := binaryPath(sha)
 	for {
 		finfo, err := os.Stat(localFile)
-		if err != nil {
+		if os.IsNotExist(err) {
 			// File does not exist: download it.
 			break
+		}
+		if err != nil {
+			return "", err
 		}
 		// File already present: check mode.
 		if finfo.Mode().Perm() == finishedFileMode {
@@ -109,8 +112,7 @@ func downloadLatestBinary() (string, error) {
 		time.Sleep(time.Millisecond * 10)
 	}
 
-	err = downloadFile(binaryURL(sha), localFile)
-	if err != nil {
+	if err := downloadFile(binaryURL(sha), localFile); err != nil {
 		_ = os.Remove(localFile)
 		return "", err
 	}
