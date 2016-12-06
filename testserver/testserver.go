@@ -136,7 +136,10 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
-	ts.WaitForInit(db)
+	err = ts.WaitForInit(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	return db, func() {
 		_ = db.Close()
@@ -225,19 +228,16 @@ func (ts *TestServer) PGURL() *url.URL {
 	}
 }
 
-// WaitForInit repeatedly looks up the list of databases until
-// the "system" database exists. It ignores all errors as we are
-// waiting for the process to start and complete initialization.
-// This does not timeout, relying instead on test timeouts.
-func (ts *TestServer) WaitForInit(db *sql.DB) {
-	for {
-		// We issue a query that fails both on connection errors and on the
-		// system database not existing.
-		if _, err := db.Query("SHOW DATABASES"); err == nil {
+// WaitForInit retries until a connection is successfully established.
+func (ts *TestServer) WaitForInit(db *sql.DB) (err error) {
+	for i := 0; i < 50; i++ {
+		if _, err = db.Query("SELECT 1"); err == nil {
 			return
 		}
-		time.Sleep(time.Millisecond * 10)
+		log.Printf("WaitForInit: %v", err)
+		time.Sleep(time.Millisecond * 100)
 	}
+	return
 }
 
 // Start runs the process, returning an error on any problems,
