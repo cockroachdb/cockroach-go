@@ -57,6 +57,7 @@ package testserver
 import (
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -73,7 +74,10 @@ import (
 	"time"
 )
 
-var sqlURLRegexp = regexp.MustCompile("sql:\\s+(postgresql:.+)\n")
+var (
+	sqlURLRegexp = regexp.MustCompile("sql:\\s+(postgresql:.+)\n")
+	customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
+)
 
 const (
 	stateNew     = iota
@@ -136,7 +140,9 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
-	ts.WaitForInit(db)
+	if err := ts.WaitForInit(db); err != nil {
+		t.Fatal(err)
+	}
 
 	return db, func() {
 		_ = db.Close()
@@ -149,12 +155,16 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
 func NewTestServer() (*TestServer, error) {
-	cockroachBinary, err := downloadLatestBinary()
-	if err == nil {
-		log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
-	} else {
-		log.Printf("Attempting to use cockroach binary from your PATH")
+	var cockroachBinary string
+	var err error
+	if len(*customBinary) > 0 {
+		cockroachBinary = *customBinary
+		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
+	} else if cockroachBinary, err = downloadLatestBinary(); err != nil {
+		log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
 		cockroachBinary = "cockroach"
+	} else {
+		log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
 	}
 
 	// Force "/tmp/" so avoid OSX's really long temp directory names
@@ -225,19 +235,17 @@ func (ts *TestServer) PGURL() *url.URL {
 	}
 }
 
-// WaitForInit repeatedly looks up the list of databases until
-// the "system" database exists. It ignores all errors as we are
-// waiting for the process to start and complete initialization.
-// This does not timeout, relying instead on test timeouts.
-func (ts *TestServer) WaitForInit(db *sql.DB) {
-	for {
-		// We issue a query that fails both on connection errors and on the
-		// system database not existing.
-		if _, err := db.Query("SHOW DATABASES"); err == nil {
-			return
+// WaitForInit retries until a connection is successfully established.
+func (ts *TestServer) WaitForInit(db *sql.DB) error {
+	var err error
+	for i := 0; i < 50; i++ {
+		if _, err = db.Query("SHOW DATABASES"); err == nil {
+			return err
 		}
-		time.Sleep(time.Millisecond * 10)
+		log.Printf("WaitForInit: %v", err)
+		time.Sleep(time.Millisecond * 100)
 	}
+	return err
 }
 
 // Start runs the process, returning an error on any problems,
