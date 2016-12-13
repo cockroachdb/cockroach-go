@@ -57,6 +57,7 @@ package testserver
 import (
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -73,7 +74,10 @@ import (
 	"time"
 )
 
-var sqlURLRegexp = regexp.MustCompile("sql:\\s+(postgresql:.+)\n")
+var (
+	sqlURLRegexp = regexp.MustCompile("sql:\\s+(postgresql:.+)\n")
+	customBinary string
+)
 
 const (
 	stateNew     = iota
@@ -97,6 +101,10 @@ type TestServer struct {
 	stderr    string
 	stdoutBuf logWriter
 	stderrBuf logWriter
+}
+
+func init() {
+	flag.StringVar(&customBinary, "cockroach-binary", "", "Use existing cockroach binary")
 }
 
 // NewDBForTest creates a new CockroachDB TestServer instance and
@@ -152,8 +160,11 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
 func NewTestServer() (*TestServer, error) {
-	cockroachBinary, err := downloadLatestBinary()
-	if err == nil {
+	var cockroachBinary string
+	if len(customBinary) > 0 {
+		cockroachBinary = customBinary
+		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
+	} else if cockroachBinary, err := downloadLatestBinary(); err == nil {
 		log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
 	} else {
 		log.Printf("Attempting to use cockroach binary from your PATH")
