@@ -75,7 +75,7 @@ import (
 )
 
 var (
-	sqlURLRegexp = regexp.MustCompile("sql:\\s+(postgresql:.+)\n")
+	sqlURLRegexp = regexp.MustCompile(`sql:\s+(postgresql:.+)\n`)
 	customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
 )
 
@@ -94,7 +94,8 @@ type TestServer struct {
 	mu        sync.RWMutex
 	state     int
 	baseDir   string
-	pgURL     *url.URL
+	tcpURL    *url.URL
+	socketURL *url.URL
 	cmd       *exec.Cmd
 	args      []string
 	stdout    string
@@ -179,14 +180,14 @@ func NewTestServer() (*TestServer, error) {
 		return nil, fmt.Errorf("could not create logs directory: %s: %s", logDir, err)
 	}
 
-	options := url.Values{
+	socketOptions := url.Values{
 		"host": []string{baseDir},
 	}
-	pgurl := &url.URL{
+	socketPgURL := &url.URL{
 		Scheme:   "postgres",
 		User:     url.User("root"),
 		Host:     fmt.Sprintf(":%d", socketPort),
-		RawQuery: options.Encode(),
+		RawQuery: socketOptions.Encode(),
 	}
 	socketPath := filepath.Join(baseDir, fmt.Sprintf("%s.%d", socketFileBase, socketPort))
 
@@ -202,11 +203,11 @@ func NewTestServer() (*TestServer, error) {
 	}
 
 	ts := &TestServer{
-		baseDir: baseDir,
-		pgURL:   pgurl,
-		args:    args,
-		stdout:  filepath.Join(logDir, "cockroach.stdout"),
-		stderr:  filepath.Join(logDir, "cockroach.stderr"),
+		baseDir:   baseDir,
+		socketURL: socketPgURL,
+		args:      args,
+		stdout:    filepath.Join(logDir, "cockroach.stdout"),
+		stderr:    filepath.Join(logDir, "cockroach.stderr"),
 	}
 	return ts, nil
 }
@@ -222,17 +223,40 @@ func (ts *TestServer) Stderr() string {
 }
 
 // PGURL returns the postgres connection URL to reach the started
-// cockroach node.
+// cockroach node using Unix sockets.
 // It loops until the expected unix socket file exists.
 // This does not timeout, relying instead on test timeouts.
 func (ts *TestServer) PGURL() *url.URL {
 	socketPath := filepath.Join(ts.baseDir, fmt.Sprintf("%s.%d", socketFileBase, socketPort))
 	for {
 		if _, err := os.Stat(socketPath); err == nil {
-			return ts.pgURL
+			return ts.socketURL
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
+}
+
+// NetworkPGURL returns the postgres connection URL to reach the started
+// cockroach node using TCP/IP network sockets.
+// It loops until the url is output on stdout.
+func (ts *TestServer) NetworkPGURL() (*url.URL, error) {
+	if ts.tcpURL != nil {
+		return ts.tcpURL, nil
+	}
+
+	err := fmt.Errorf("failure to find SQL URL in stdout")
+	for i := 0; i < 50; i++ {
+		if match := sqlURLRegexp.FindStringSubmatch(ts.Stdout()); match != nil {
+			ts.tcpURL, err = url.Parse(match[1])
+			if err != nil {
+				return nil, fmt.Errorf("failure to parse SQL URL: %v", err)
+			}
+			return ts.tcpURL, nil
+		}
+		log.Printf("NetworkPGURL: %v", err)
+		time.Sleep(time.Millisecond * 100)
+	}
+	return nil, err
 }
 
 // WaitForInit retries until a connection is successfully established.
