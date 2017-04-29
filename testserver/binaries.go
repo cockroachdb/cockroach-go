@@ -3,63 +3,25 @@ package testserver
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 )
 
 const (
-	awsBaseURL       = "https://s3.amazonaws.com/cockroach/cockroach"
 	latestSuffix     = "LATEST"
-	localBinaryPath  = "/var/tmp"
 	finishedFileMode = 0555
 )
 
-func binaryName() string {
-	return fmt.Sprintf("cockroach.%s-%s", runtime.GOOS, runtime.GOARCH)
-}
-
-func binaryNameWithSha(sha string) string {
-	return fmt.Sprintf("%s.%s", binaryName(), sha)
-}
-
-func binaryPath(sha string) string {
-	return filepath.Join(localBinaryPath, binaryNameWithSha(sha))
-}
-
-func latestMarkerURL() string {
-	return fmt.Sprintf("%s/%s.%s", awsBaseURL, binaryName(), latestSuffix)
-}
-
-func binaryURL(sha string) string {
-	return fmt.Sprintf("%s/%s.%s", awsBaseURL, binaryName(), sha)
-}
-
-func findLatestSha() (string, error) {
-	markerURL := latestMarkerURL()
-	marker, err := http.Get(markerURL)
-	if err != nil {
-		return "", fmt.Errorf("could not download %s: %s", markerURL, err)
-	}
-	if marker.StatusCode == 404 {
-		return "", fmt.Errorf("for 404 from GET %s: make sure OS and ARCH are supported",
-			markerURL)
-	} else if marker.StatusCode != 200 {
-		return "", fmt.Errorf("bad response got GET %s: %d (%s)",
-			markerURL, marker.StatusCode, marker.Status)
-	}
-
-	defer marker.Body.Close()
-	body, err := ioutil.ReadAll(marker.Body)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(body)), nil
+var client = http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
 }
 
 func downloadFile(url, filePath string) error {
@@ -71,7 +33,7 @@ func downloadFile(url, filePath string) error {
 
 	log.Printf("downloading %s to %s, this may take some time", url, filePath)
 
-	response, err := http.Get(url)
+	response, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("error downloading %s: %s", url, err)
 	}
@@ -80,8 +42,7 @@ func downloadFile(url, filePath string) error {
 		return fmt.Errorf("error downloading %s: %d (%s)", url, response.StatusCode, response.Status)
 	}
 
-	_, err = io.Copy(output, response.Body)
-	if err != nil {
+	if _, err := io.Copy(output, response.Body); err != nil {
 		return fmt.Errorf("problem downloading %s to %s: %s", url, filePath, err)
 	}
 
@@ -90,14 +51,26 @@ func downloadFile(url, filePath string) error {
 }
 
 func downloadLatestBinary() (string, error) {
-	sha, err := findLatestSha()
+	binaryName := fmt.Sprintf("cockroach.%s-%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	resp, err := client.Head((&url.URL{
+		Scheme: "https",
+		Host:   "edge-binaries.cockroachdb.com",
+		Path:   path.Join("cockroach", fmt.Sprintf("%s.%s", binaryName, latestSuffix)),
+	}).String())
+	if err != nil {
+		return "", err
+	}
+	u, err := resp.Location()
 	if err != nil {
 		return "", err
 	}
 
-	localFile := binaryPath(sha)
+	localFile := filepath.Join(os.TempDir(), path.Base(u.Path))
 	for {
-		finfo, err := os.Stat(localFile)
+		info, err := os.Stat(localFile)
 		if os.IsNotExist(err) {
 			// File does not exist: download it.
 			break
@@ -106,13 +79,13 @@ func downloadLatestBinary() (string, error) {
 			return "", err
 		}
 		// File already present: check mode.
-		if finfo.Mode().Perm() == finishedFileMode {
+		if info.Mode().Perm() == finishedFileMode {
 			return localFile, nil
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
 
-	if err := downloadFile(binaryURL(sha), localFile); err != nil {
+	if err := downloadFile(u.String(), localFile); err != nil {
 		_ = os.Remove(localFile)
 		return "", err
 	}
