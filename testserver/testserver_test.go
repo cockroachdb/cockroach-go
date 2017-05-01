@@ -19,9 +19,7 @@ package testserver_test
 import (
 	"testing"
 
-	// Needed for postgres driver test.
 	"github.com/cockroachdb/cockroach-go/testserver"
-	_ "github.com/lib/pq"
 )
 
 func TestRunServer(t *testing.T) {
