@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"time"
 )
@@ -36,8 +38,25 @@ func downloadFile(response *http.Response, filePath string) error {
 	return os.Chmod(filePath, finishedFileMode)
 }
 
+var glibcRE = regexp.MustCompile(`(?i)\bglibc\b`)
+
 func downloadLatestBinary() (string, error) {
-	binaryName := fmt.Sprintf("cockroach.%s-%s", runtime.GOOS, runtime.GOARCH)
+	goos := runtime.GOOS
+	if goos == "linux" {
+		goos += func() string {
+			// Detect which C library is present on the system. See
+			// https://unix.stackexchange.com/a/120381.
+			cmd := exec.Command("ldd", "--version")
+			out, err := cmd.Output()
+			if err != nil {
+				log.Printf("%s: out=%q err=%s", cmd.Args, out, err)
+			} else if glibcRE.Match(out) {
+				return "-gnu"
+			}
+			return "-musl"
+		}()
+	}
+	binaryName := fmt.Sprintf("cockroach.%s-%s", goos, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		binaryName += ".exe"
 	}
