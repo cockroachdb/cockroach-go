@@ -38,7 +38,7 @@ func downloadFile(response *http.Response, filePath string) error {
 	return os.Chmod(filePath, finishedFileMode)
 }
 
-var glibcRE = regexp.MustCompile(`(?i)\bglibc\b`)
+var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
 
 func downloadLatestBinary() (string, error) {
 	goos := runtime.GOOS
@@ -50,10 +50,10 @@ func downloadLatestBinary() (string, error) {
 			out, err := cmd.Output()
 			if err != nil {
 				log.Printf("%s: out=%q err=%s", cmd.Args, out, err)
-			} else if glibcRE.Match(out) {
-				return "-gnu"
+			} else if muslRE.Match(out) {
+				return "-musl"
 			}
-			return "-musl"
+			return "-gnu"
 		}()
 	}
 	binaryName := fmt.Sprintf("cockroach.%s-%s", goos, runtime.GOARCH)
