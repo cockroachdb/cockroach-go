@@ -55,12 +55,10 @@
 package testserver
 
 import (
-	"bytes"
 	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -68,7 +66,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -76,13 +73,11 @@ import (
 	"time"
 
 	// Import postgres driver.
+
 	_ "github.com/lib/pq"
 )
 
-var (
-	sqlURLRegexp = regexp.MustCompile(`sql:\s+(postgresql:.+)`)
-	customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
-)
+var customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
 
 const (
 	stateNew = 1 + iota
@@ -100,13 +95,13 @@ type TestServer struct {
 		set chan struct{}
 		u   *url.URL
 	}
-	cmd        *exec.Cmd
-	args       []string
-	stdout     string
-	stderr     string
-	stdoutIntr *patternInterceptor
-	stdoutBuf  logWriter
-	stderrBuf  logWriter
+	cmd              *exec.Cmd
+	args             []string
+	stdout           string
+	stderr           string
+	stdoutBuf        logWriter
+	stderrBuf        logWriter
+	listeningURLFile string
 }
 
 // NewDBForTest creates a new CockroachDB TestServer instance and
@@ -185,6 +180,8 @@ func NewTestServer() (*TestServer, error) {
 		return nil, fmt.Errorf("could not create logs directory: %s: %s", logDir, err)
 	}
 
+	listeningURLFile := filepath.Join(baseDir, "listen-url")
+
 	args := []string{
 		cockroachBinary,
 		"start",
@@ -194,14 +191,16 @@ func NewTestServer() (*TestServer, error) {
 		"--port=0",
 		"--http-port=0",
 		"--store=" + baseDir,
+		"--listening-url-file=" + listeningURLFile,
 	}
 
 	ts := &TestServer{
-		state:   stateNew,
-		baseDir: baseDir,
-		args:    args,
-		stdout:  filepath.Join(logDir, "cockroach.stdout"),
-		stderr:  filepath.Join(logDir, "cockroach.stderr"),
+		state:            stateNew,
+		baseDir:          baseDir,
+		args:             args,
+		stdout:           filepath.Join(logDir, "cockroach.stdout"),
+		stderr:           filepath.Join(logDir, "cockroach.stderr"),
+		listeningURLFile: listeningURLFile,
 	}
 	ts.pgURL.set = make(chan struct{})
 	return ts, nil
@@ -245,6 +244,35 @@ func (ts *TestServer) WaitForInit(db *sql.DB) error {
 	return err
 }
 
+func (ts *TestServer) pollListeningURLFile() error {
+	var data []byte
+	for {
+		ts.mu.Lock()
+		state := ts.state
+		ts.mu.Unlock()
+		if state != stateRunning {
+			return fmt.Errorf("server stopped or crashed before listening URL file was available")
+		}
+
+		var err error
+		data, err = ioutil.ReadFile(ts.listeningURLFile)
+		if err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("unexpected error while reading listening URL file: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	u, err := url.Parse(string(data))
+	if err != nil {
+		return fmt.Errorf("failed to parse SQL URL: %v", err)
+	}
+	ts.setPGURL(u)
+
+	return nil
+}
+
 // Start runs the process, returning an error on any problems,
 // including being unable to start, but not unexpected failure.
 // It should only be called once in the lifetime of a TestServer object.
@@ -267,18 +295,7 @@ func (ts *TestServer) Start() error {
 		}
 		ts.stdoutBuf = wr
 	}
-
-	pi := newPatternInterceptor(ts.stdoutBuf, sqlURLRegexp, func(match [][]byte) error {
-		u, err := url.Parse(string(match[1]))
-		if err != nil {
-			return fmt.Errorf("failure to parse SQL URL: %v", err)
-		}
-		ts.setPGURL(u)
-		ts.stdoutIntr.Disable()
-		return nil
-	})
-	ts.stdoutIntr = pi
-	ts.cmd.Stdout = pi
+	ts.cmd.Stdout = ts.stdoutBuf
 
 	if len(ts.stderr) > 0 {
 		wr, err := newFileLogWriter(ts.stderr)
@@ -330,6 +347,14 @@ func (ts *TestServer) Start() error {
 		ts.mu.Unlock()
 	}()
 
+	go func() {
+		if err := ts.pollListeningURLFile(); err != nil {
+			log.Printf("%v", err)
+			close(ts.pgURL.set)
+			ts.Stop()
+		}
+	}()
+
 	return nil
 }
 
@@ -356,64 +381,6 @@ func (ts *TestServer) Stop() {
 
 	// Only cleanup on intentional stops.
 	_ = os.RemoveAll(ts.baseDir)
-}
-
-// patternInterceptor wraps an io.Writer and attempts to match the data stream
-// to its regular expression pattern, calling the provided callback for all matches.
-type patternInterceptor struct {
-	w       io.Writer
-	re      *regexp.Regexp
-	onMatch func([][]byte) error
-
-	buf      []byte
-	disabled bool
-}
-
-func newPatternInterceptor(w io.Writer, re *regexp.Regexp, onMatch func([][]byte) error) *patternInterceptor {
-	return &patternInterceptor{
-		re:      re,
-		onMatch: onMatch,
-	}
-}
-
-func (pi *patternInterceptor) Write(p []byte) (n int, err error) {
-	if !pi.disabled {
-		// Search each full line in p for matches. Buffer partial lines.
-		for sp := p; ; {
-			i := bytes.IndexByte(sp, '\n')
-			if i == -1 {
-				pi.buf = append(pi.buf, sp...)
-				break
-			}
-
-			l := sp[:i]
-			if len(pi.buf) > 0 {
-				l = append(pi.buf, l...)
-			}
-
-			if matches := pi.re.FindAllSubmatch(l, -1); matches != nil {
-				for _, match := range matches {
-					if err := pi.onMatch(match); err != nil {
-						return 0, err
-					}
-				}
-			}
-
-			sp = sp[i+1:]
-			pi.buf = pi.buf[:0]
-		}
-	}
-	if pi.w == nil {
-		return len(p), nil
-	}
-	return pi.w.Write(p)
-}
-
-// Disable disables the patternInterceptor from attempting to match the data
-// stream to its pattern, allowing writes to pass through without inspection.
-func (pi *patternInterceptor) Disable() {
-	pi.disabled = true
-	pi.buf = nil
 }
 
 type logWriter interface {
