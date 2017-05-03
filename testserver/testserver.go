@@ -104,7 +104,7 @@ type TestServer struct {
 	args       []string
 	stdout     string
 	stderr     string
-	stdoutIntr *patternInterceptor
+	stderrIntr *patternInterceptor
 	stdoutBuf  logWriter
 	stderrBuf  logWriter
 }
@@ -267,18 +267,7 @@ func (ts *TestServer) Start() error {
 		}
 		ts.stdoutBuf = wr
 	}
-
-	pi := newPatternInterceptor(ts.stdoutBuf, sqlURLRegexp, func(match [][]byte) error {
-		u, err := url.Parse(string(match[1]))
-		if err != nil {
-			return fmt.Errorf("failure to parse SQL URL: %v", err)
-		}
-		ts.setPGURL(u)
-		ts.stdoutIntr.Disable()
-		return nil
-	})
-	ts.stdoutIntr = pi
-	ts.cmd.Stdout = pi
+	ts.cmd.Stdout = ts.stdoutBuf
 
 	if len(ts.stderr) > 0 {
 		wr, err := newFileLogWriter(ts.stderr)
@@ -287,7 +276,17 @@ func (ts *TestServer) Start() error {
 		}
 		ts.stderrBuf = wr
 	}
-	ts.cmd.Stderr = ts.stderrBuf
+	pi := newPatternInterceptor(ts.stdoutBuf, sqlURLRegexp, func(match [][]byte) error {
+		u, err := url.Parse(string(match[1]))
+		if err != nil {
+			return fmt.Errorf("failure to parse SQL URL: %v", err)
+		}
+		ts.setPGURL(u)
+		ts.stderrIntr.Disable()
+		return nil
+	})
+	ts.stderrIntr = pi
+	ts.cmd.Stderr = pi
 
 	for k, v := range defaultEnv() {
 		ts.cmd.Env = append(ts.cmd.Env, k+"="+v)
