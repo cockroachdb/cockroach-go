@@ -55,6 +55,7 @@
 package testserver
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"flag"
@@ -263,7 +264,7 @@ func (ts *TestServer) pollListeningURLFile() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	u, err := url.Parse(string(data))
+	u, err := url.Parse(string(bytes.TrimSpace(data)))
 	if err != nil {
 		return fmt.Errorf("failed to parse SQL URL: %v", err)
 	}
