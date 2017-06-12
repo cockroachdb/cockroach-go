@@ -25,9 +25,25 @@ import (
 	"github.com/cockroachdb/cockroach-go/testserver"
 )
 
+func TestExecuteTx(t *testing.T) {
+	executeTx := func(db *sql.DB, fn func(tx *sql.Tx) error) (err error) { return ExecuteTx(db, fn) }
+	testExecuteTxInner(t, executeTx)
+}
+
+func TestExecuteBegunTx(t *testing.T) {
+	executeTx := func(db *sql.DB, fn func(tx *sql.Tx) error) (err error) {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		return ExecuteBegunTx(tx, func() error { return fn(tx) })
+	}
+	testExecuteTxInner(t, executeTx)
+}
+
 // TestExecuteTx verifies transaction retry using the classic
 // example of write skew in bank account balance transfers.
-func TestExecuteTx(t *testing.T) {
+func testExecuteTxInner(t *testing.T, executeTxFn func(db *sql.DB, fn func(tx *sql.Tx) error) error) {
 	db, stop := testserver.NewDBForTest(t)
 	defer stop()
 
@@ -69,7 +85,7 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 		errCh := make(chan error, 1)
 		go func() {
 			*iter = 0
-			errCh <- ExecuteTx(db, func(tx *sql.Tx) error {
+			errCh <- executeTxFn(db, func(tx *sql.Tx) error {
 				*iter++
 				bal1, bal2, err := getBalances(tx)
 				if err != nil {

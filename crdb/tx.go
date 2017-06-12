@@ -21,7 +21,6 @@ package crdb
 import (
 	"database/sql"
 
-	"github.com/jinzhu/gorm"
 	"github.com/lib/pq"
 )
 
@@ -51,40 +50,17 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	if err != nil {
 		return err
 	}
-	return executeTxInternal(tx, func() error { return fn(tx) })
+	return ExecuteBegunTx(tx, func() error { return fn(tx) })
 }
 
-func ExecuteGORMTx(db *gorm.DB, fn func(*gorm.DB) error) (err error) {
-	tx := db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	return executeTxInternal(&gormTx{tx}, func() error { return fn(tx) })
-}
-
-type transaction interface {
+type Tx interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Commit() error
 	Rollback() error
 }
 
-type gormTx struct {
-	gormDB *gorm.DB
-}
-
-func (db *gormTx) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return nil, db.gormDB.Exec(query, args).Error
-}
-
-func (db *gormTx) Commit() error {
-	return db.gormDB.Commit().Error
-}
-
-func (db *gormTx) Rollback() error {
-	return db.gormDB.Rollback().Error
-}
-
-func executeTxInternal(tx transaction, fn func() error) (err error) {
+// ExecuteBegunTx runs fn inside tx which should already have begun.
+func ExecuteBegunTx(tx Tx, fn func() error) (err error) {
 	defer func() {
 		if err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
