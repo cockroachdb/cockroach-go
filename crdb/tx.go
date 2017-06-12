@@ -50,7 +50,7 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	if err != nil {
 		return err
 	}
-	return ExecuteBegunTx(tx, func() error { return fn(tx) })
+	return ExecuteInTx(tx, func() error { return fn(tx) })
 }
 
 type Tx interface {
@@ -59,8 +59,8 @@ type Tx interface {
 	Rollback() error
 }
 
-// ExecuteBegunTx runs fn inside tx which should already have begun.
-func ExecuteBegunTx(tx Tx, fn func() error) (err error) {
+// ExecuteInTx runs fn inside tx which should already have begun.
+func ExecuteInTx(tx Tx, fn func() error) (err error) {
 	defer func() {
 		if err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.

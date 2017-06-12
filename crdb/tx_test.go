@@ -36,7 +36,7 @@ func TestExecuteBegunTx(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return ExecuteBegunTx(tx, func() error { return fn(tx) })
+		return ExecuteInTx(tx, func() error { return fn(tx) })
 	}
 	testExecuteTxInner(t, executeTx)
 }
