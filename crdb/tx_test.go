@@ -30,7 +30,7 @@ func TestExecuteTx(t *testing.T) {
 	testExecuteTxInner(t, executeTx)
 }
 
-func TestExecuteBegunTx(t *testing.T) {
+func TestExecuteInTx(t *testing.T) {
 	executeTx := func(db *sql.DB, fn func(tx *sql.Tx) error) (err error) {
 		tx, err := db.Begin()
 		if err != nil {
