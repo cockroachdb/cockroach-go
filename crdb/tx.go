@@ -60,7 +60,7 @@ type Tx interface {
 }
 
 // ExecuteInTx runs fn inside tx which should already have begun.
-// WARNING: Do not execute any statements on the supplied tx before calling this function.
+// *WARNING*: Do not execute any statements on the supplied tx before calling this function.
 // ExecuteInTx will only retry statements that are performed within the supplied
 // closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
 // be re-run if the transaction needs to be retried.
