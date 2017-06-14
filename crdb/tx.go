@@ -60,8 +60,10 @@ type Tx interface {
 }
 
 // ExecuteInTx runs fn inside tx which should already have begun.
-// *** WARNING ***: tx should not have been used before being passed to ExecuteInTx; any
-// statements executed prior may be rolled back even though tx may commit successfully.
+// WARNING: Do not execute any statements on the supplied tx before calling this function.
+// ExecuteInTx will only retry statements that are performed within the supplied
+// closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
+// be re-run if the transaction needs to be retried.
 func ExecuteInTx(tx Tx, fn func() error) (err error) {
 	defer func() {
 		if err == nil {
