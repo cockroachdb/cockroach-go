@@ -42,8 +42,8 @@
 //      defer ts.Stop()
 //
 //      url := ts.PGURL()
-//      if url != nil {
-//        t.FatalF("url not found")
+//      if url == nil {
+//        t.Fatalf("url not found")
 //      }
 //      t.Logf("URL: %s", url.String())
 //
