@@ -35,7 +35,11 @@ func downloadFile(response *http.Response, filePath string) error {
 	}
 
 	// Download was successful, add the rw bits.
-	return os.Chmod(filePath, finishedFileMode)
+	if err := output.Chmod(finishedFileMode); err != nil {
+		return err
+	}
+
+	return output.Close()
 }
 
 var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
@@ -104,7 +108,9 @@ func downloadLatestBinary() (string, error) {
 	}
 
 	if err := downloadFile(response, localFile); err != nil {
-		_ = os.Remove(localFile)
+		if err := os.Remove(localFile); err != nil {
+			log.Printf("failed to remove %s: %s", localFile, err)
+		}
 		return "", err
 	}
 
