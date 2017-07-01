@@ -26,8 +26,7 @@ import (
 )
 
 func TestExecuteTx(t *testing.T) {
-	executeTx := func(db *sql.DB, fn func(tx *sql.Tx) error) (err error) { return ExecuteTx(db, fn) }
-	testExecuteTxInner(t, executeTx)
+	testExecuteTxInner(t, ExecuteTx)
 }
 
 func TestExecuteInTx(t *testing.T) {
@@ -69,7 +68,7 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 		defer rows.Close()
 		balances := []*int{&bal1, &bal2}
 		i := 0
-		for ; rows.Next(); i += 1 {
+		for ; rows.Next(); i++ {
 			if err = rows.Scan(balances[i]); err != nil {
 				return
 			}
