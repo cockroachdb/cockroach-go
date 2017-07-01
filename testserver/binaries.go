@@ -106,6 +106,7 @@ func downloadLatestBinary() (string, error) {
 		if info.Mode().Perm() == finishedFileMode {
 			return localFile, nil
 		}
+		log.Printf("waiting for download of %s", localFile)
 		time.Sleep(time.Millisecond * 10)
 	}
 
