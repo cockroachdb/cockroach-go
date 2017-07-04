@@ -20,6 +20,7 @@ package crdb
 
 import (
 	"database/sql"
+	"fmt"
 
 	"github.com/lib/pq"
 )
@@ -104,7 +105,19 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 			return err
 		}
 		if _, err = tx.Exec("ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
-			return err
+			// ROLLBACK TO SAVEPOINT failed. If it failed with a lib/pq error, we want
+			// to pass this error to the client, but also include the original error
+			// message and code. So, we'll do some surgery on lib/pq errors in
+			// particular.
+			// If it failed with any other error (e.g. the "driver: bad connection" is
+			// untyped), we overwrite the error.
+			msgPattern := "restarting txn failed. ROLLBACK TO SAVEPOINT encountered error: %s. " +
+				"Original error (code: %s): %s."
+			if rollbackPQErr, ok := err.(*pq.Error); ok {
+				rollbackPQErr.Message = fmt.Sprintf(msgPattern, rollbackPQErr, pqErr.Code, pqErr)
+				return rollbackPQErr
+			}
+			return fmt.Errorf(msgPattern, err, pqErr.Code, pqErr)
 		}
 	}
 }
