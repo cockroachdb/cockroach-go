@@ -40,7 +40,7 @@ type AmbiguousCommitError struct {
 // In that case, we return AmbiguousCommitError.
 //
 // For more information about CockroachDB's transaction model see
-// https://cockroachlabs.com/docs/transactions.html.
+// https://cockroachlabs.com/docs/stable/transactions.html.
 //
 // NOTE: the supplied exec closure should not have external side
 // effects beyond changes to the database.
