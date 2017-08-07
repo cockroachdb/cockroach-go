@@ -19,6 +19,7 @@
 package crdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -44,20 +45,51 @@ type AmbiguousCommitError struct {
 //
 // NOTE: the supplied exec closure should not have external side
 // effects beyond changes to the database.
-func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
+func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) error {
+	return ExecuteTxContext(context.Background(), db, nil, fn)
+}
+
+// ExecuteTxContext has the same functionality as ExecuteTx but also
+// provides the ability to add a context, and tx options to be used in
+// BeginTx.
+func ExecuteTxContext(ctx context.Context, db *sql.DB, txopts *sql.TxOptions, fn func(*sql.Tx) error) (err error) {
 	// Start a transaction.
 	var tx *sql.Tx
-	tx, err = db.Begin()
+	tx, err = db.BeginTx(ctx, txopts)
 	if err != nil {
 		return err
 	}
-	return ExecuteInTx(tx, func() error { return fn(tx) })
+	return ExecuteInTxContext(ctx, tx, func() error { return fn(tx) })
 }
 
+// Tx is an interface clients can implement if they want to use their
+// own transaction engine (other than what is provided by package sql.)
 type Tx interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Commit() error
 	Rollback() error
+}
+
+// TxContext is a Tx with additional support for contexts.
+// NOTE: One reason to keep TxContext and Tx separate is that Tx is an older
+// interface, and there might be clients in the wild that implement it.
+type TxContext interface {
+	Tx
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+// ignoreContext implements TxContext using a Tx by directly calling Exec
+// from ExecContext (effectively ignoring the context.)
+// This exists so that we can reuse the same ExecuteInTxContext
+// implementation for clients that only implement Tx.
+type ignoreContext struct {
+	Tx
+}
+
+func (t ignoreContext) ExecContext(
+	ctx context.Context, query string, args ...interface{},
+) (sql.Result, error) {
+	return t.Tx.Exec(query, args...)
 }
 
 // ExecuteInTx runs fn inside tx which should already have begun.
@@ -65,7 +97,13 @@ type Tx interface {
 // ExecuteInTx will only retry statements that are performed within the supplied
 // closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
 // be re-run if the transaction needs to be retried.
-func ExecuteInTx(tx Tx, fn func() error) (err error) {
+func ExecuteInTx(tx Tx, fn func() error) error {
+	return ExecuteInTxContext(context.Background(), ignoreContext{tx}, fn)
+}
+
+// ExecuteInTxContext is the same as ExecuteInTx, with additional
+// functionality for using a context for all operations.
+func ExecuteInTxContext(ctx context.Context, tx TxContext, fn func() error) (err error) {
 	defer func() {
 		if err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
@@ -78,7 +116,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 	}()
 	// Specify that we intend to retry this txn in case of CockroachDB retryable
 	// errors.
-	if _, err = tx.Exec("SAVEPOINT cockroach_restart"); err != nil {
+	if _, err = tx.ExecContext(ctx, "SAVEPOINT cockroach_restart"); err != nil {
 		return err
 	}
 
@@ -89,7 +127,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
 			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
 			released = true
-			if _, err = tx.Exec("RELEASE SAVEPOINT cockroach_restart"); err == nil {
+			if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
 				return nil
 			}
 		}
@@ -104,7 +142,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 			}
 			return err
 		}
-		if _, err = tx.Exec("ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
+		if _, err = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
 			// ROLLBACK TO SAVEPOINT failed. If it failed with a lib/pq error, we want
 			// to pass this error to the client, but also include the original error
 			// message and code. So, we'll do some surgery on lib/pq errors in
