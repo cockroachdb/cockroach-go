@@ -19,6 +19,7 @@
 package crdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -44,14 +45,18 @@ type AmbiguousCommitError struct {
 //
 // NOTE: the supplied exec closure should not have external side
 // effects beyond changes to the database.
-func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
+func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) error {
+	return ExecuteTxContext(context.Background(), db, fn)
+}
+
+func ExecuteTxContext(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	// Start a transaction.
 	var tx *sql.Tx
-	tx, err = db.Begin()
+	tx, err = db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return ExecuteInTx(tx, func() error { return fn(tx) })
+	return ExecuteInTxContext(ctx, tx, func() error { return fn(tx) })
 }
 
 type Tx interface {
@@ -60,12 +65,31 @@ type Tx interface {
 	Rollback() error
 }
 
+type TxContext interface {
+	Tx
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+type ignoreContext struct {
+	Tx
+}
+
+func (t ignoreContext) ExecContext(
+	ctx context.Context, query string, args ...interface{},
+) (sql.Result, error) {
+	return t.Tx.Exec(query, args...)
+}
+
 // ExecuteInTx runs fn inside tx which should already have begun.
 // *WARNING*: Do not execute any statements on the supplied tx before calling this function.
 // ExecuteInTx will only retry statements that are performed within the supplied
 // closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
 // be re-run if the transaction needs to be retried.
-func ExecuteInTx(tx Tx, fn func() error) (err error) {
+func ExecuteInTx(tx Tx, fn func() error) error {
+	return ExecuteInTxContext(context.Background(), ignoreContext{tx}, fn)
+}
+
+func ExecuteInTxContext(ctx context.Context, tx TxContext, fn func() error) (err error) {
 	defer func() {
 		if err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
@@ -78,7 +102,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 	}()
 	// Specify that we intend to retry this txn in case of CockroachDB retryable
 	// errors.
-	if _, err = tx.Exec("SAVEPOINT cockroach_restart"); err != nil {
+	if _, err = tx.ExecContext(ctx, "SAVEPOINT cockroach_restart"); err != nil {
 		return err
 	}
 
@@ -89,7 +113,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
 			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
 			released = true
-			if _, err = tx.Exec("RELEASE SAVEPOINT cockroach_restart"); err == nil {
+			if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
 				return nil
 			}
 		}
@@ -104,7 +128,7 @@ func ExecuteInTx(tx Tx, fn func() error) (err error) {
 			}
 			return err
 		}
-		if _, err = tx.Exec("ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
+		if _, err = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); err != nil {
 			// ROLLBACK TO SAVEPOINT failed. If it failed with a lib/pq error, we want
 			// to pass this error to the client, but also include the original error
 			// message and code. So, we'll do some surgery on lib/pq errors in
