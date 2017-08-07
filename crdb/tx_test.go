@@ -17,6 +17,7 @@
 package crdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -35,7 +36,7 @@ func TestExecuteInTx(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return ExecuteInTx(tx, func() error { return fn(tx) })
+		return ExecuteInTx(context.Background(), tx, func() error { return fn(tx) })
 	}
 	testExecuteTxInner(t, executeTx)
 }
