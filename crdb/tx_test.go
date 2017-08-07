@@ -17,6 +17,7 @@
 package crdb
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -30,19 +31,32 @@ func TestExecuteTx(t *testing.T) {
 }
 
 func TestExecuteInTx(t *testing.T) {
-	executeTx := func(db *sql.DB, fn func(tx *sql.Tx) error) (err error) {
-		tx, err := db.Begin()
+	executeTx := func(
+		ctx context.Context,
+		db *sql.DB,
+		opts *sql.TxOptions,
+		fn func(*sql.Tx) error,
+	) error {
+		tx, err := db.BeginTx(ctx, opts)
 		if err != nil {
 			return err
 		}
-		return ExecuteInTx(tx, func() error { return fn(tx) })
+		return ExecuteInTx(ctx, tx, func() error { return fn(tx) })
 	}
 	testExecuteTxInner(t, executeTx)
 }
 
 // TestExecuteTx verifies transaction retry using the classic
 // example of write skew in bank account balance transfers.
-func testExecuteTxInner(t *testing.T, executeTxFn func(db *sql.DB, fn func(tx *sql.Tx) error) error) {
+func testExecuteTxInner(
+	t *testing.T,
+	executeTxFn func(
+		context.Context,
+		*sql.DB,
+		*sql.TxOptions,
+		func(*sql.Tx) error,
+	) error,
+) {
 	db, stop := testserver.NewDBForTest(t)
 	defer stop()
 
@@ -84,7 +98,7 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 		errCh := make(chan error, 1)
 		go func() {
 			*iter = 0
-			errCh <- executeTxFn(db, func(tx *sql.Tx) error {
+			errCh <- executeTxFn(context.Background(), db, nil, func(tx *sql.Tx) error {
 				*iter++
 				bal1, bal2, err := getBalances(tx)
 				if err != nil {
