@@ -11,8 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
-//
-// Author: Andrei Matei (andrei@cockroachlabs.com)
 
 // Package crdb provides helpers for using CockroachDB in client
 // applications.
@@ -54,6 +52,7 @@ func ExecuteTx(db *sql.DB, fn func(*sql.Tx) error) (err error) {
 	return ExecuteInTx(tx, func() error { return fn(tx) })
 }
 
+// Tx is used to permit clients to implement custom transaction logic.
 type Tx interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Commit() error

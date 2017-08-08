@@ -11,8 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
-//
-// Author: Marc Berhault (marc@cockroachlabs.com)
 
 // Package testserver provides helpers to run a cockroach binary within tests.
 // It automatically downloads the latest cockroach binary for your platform
@@ -315,9 +313,13 @@ func (ts *TestServer) Start() error {
 		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.args, " "))
 	}
 	if err != nil {
-		log.Printf(err.Error())
-		ts.stdoutBuf.Close()
-		ts.stderrBuf.Close()
+		log.Print(err.Error())
+		if err := ts.stdoutBuf.Close(); err != nil {
+			log.Printf("failed to close stdout: %s", err)
+		}
+		if err := ts.stderrBuf.Close(); err != nil {
+			log.Printf("failed to close stderr: %s", err)
+		}
 
 		ts.mu.Lock()
 		ts.state = stateFailed
@@ -327,16 +329,20 @@ func (ts *TestServer) Start() error {
 	}
 
 	go func() {
-		ts.cmd.Wait()
+		err := ts.cmd.Wait()
 
-		ts.stdoutBuf.Close()
-		ts.stderrBuf.Close()
+		if err := ts.stdoutBuf.Close(); err != nil {
+			log.Printf("failed to close stdout: %s", err)
+		}
+		if err := ts.stderrBuf.Close(); err != nil {
+			log.Printf("failed to close stderr: %s", err)
+		}
 
 		ps := ts.cmd.ProcessState
 		sy := ps.Sys().(syscall.WaitStatus)
 
-		log.Printf("Process %d exited with status %d", ps.Pid(), sy.ExitStatus())
-		log.Printf(ps.String())
+		log.Printf("Process %d exited with status %d: %v", ps.Pid(), sy.ExitStatus(), err)
+		log.Print(ps.String())
 
 		ts.mu.Lock()
 		if sy.ExitStatus() == 0 {
@@ -376,7 +382,7 @@ func (ts *TestServer) Stop() {
 
 	if ts.state != stateStopped {
 		// Only call kill if not running. It could have exited properly.
-		ts.cmd.Process.Kill()
+		_ = ts.cmd.Process.Kill()
 	}
 
 	// Only cleanup on intentional stops.
@@ -387,7 +393,7 @@ type logWriter interface {
 	Write(p []byte) (n int, err error)
 	String() string
 	Len() int64
-	Close()
+	Close() error
 }
 
 type fileLogWriter struct {
@@ -407,8 +413,8 @@ func newFileLogWriter(file string) (*fileLogWriter, error) {
 	}, nil
 }
 
-func (w fileLogWriter) Close() {
-	w.file.Close()
+func (w fileLogWriter) Close() error {
+	return w.file.Close()
 }
 
 func (w fileLogWriter) Write(p []byte) (n int, err error) {
