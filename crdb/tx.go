@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"github.com/lib/pq"
+	"github.com/pkg/errors"
 )
 
 // AmbiguousCommitError represents an error that left a transaction in an
@@ -116,7 +117,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 				rollbackPQErr.Message = fmt.Sprintf(msgPattern, rollbackPQErr, pqErr.Code, pqErr)
 				return rollbackPQErr
 			}
-			return fmt.Errorf(msgPattern, err, pqErr.Code, pqErr)
+			return errors.Wrapf(err, msgPattern, err, pqErr.Code, pqErr)
 		}
 	}
 }
