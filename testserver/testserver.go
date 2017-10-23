@@ -27,8 +27,7 @@
 //      if err != nil {
 //        t.Fatal(err)
 //      }
-//      err := ts.Start()
-//      if err != nil {
+//      if err := ts.Start(); err != nil {
 //        t.Fatal(err)
 //      }
 //      defer ts.Stop()
@@ -115,8 +114,7 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
-	err = ts.Start()
-	if err != nil {
+	if err := ts.Start(); err != nil {
 		t.Fatal(err)
 	}
 
