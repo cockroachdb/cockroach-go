@@ -17,12 +17,6 @@
 // (Linux-amd64 and Darwin-amd64 only for now), or attempts to run "cockroach"
 // from your PATH.
 //
-// A normal invocation is (check err every time):
-// ts, err := testserver.NewTestServer()
-// err = ts.Start()
-// defer ts.Stop()
-// url := ts.PGURL()
-//
 // To use, run as follows:
 //   import "github.com/cockroachdb/cockroach-go/testserver"
 //   import "testing"
