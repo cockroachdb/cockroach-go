@@ -91,7 +91,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		// for either the standard PG errcode SerializationFailureError:40001 or the Cockroach extension
 		// errcode RetriableError:CR000. The Cockroach extension has been removed server-side, but support
 		// for it has been left here for now to maintain backwards compatibility.
-		pqErr, ok := err.(*pq.Error)
+		pqErr, ok := cause(err).(*pq.Error)
 		if retryable := ok && (pqErr.Code == "CR000" || pqErr.Code == "40001"); !retryable {
 			if released {
 				err = newAmbiguousCommitError(err)
