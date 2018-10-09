@@ -76,6 +76,18 @@ func ExecuteTx(
 	return ExecuteInTx(ctx, tx, func() error { return fn(tx) })
 }
 
+// ExecuteTxOnConn is a variant of ExecuteTx that is run on a specific sql.Conn.
+func ExecuteTxOnConn(
+	ctx context.Context, conn *sql.Conn, txopts *sql.TxOptions, fn func(*sql.Tx) error,
+) error {
+	// Start a transaction.
+	tx, err := conn.BeginTx(ctx, txopts)
+	if err != nil {
+		return err
+	}
+	return ExecuteInTx(ctx, tx, func() error { return fn(tx) })
+}
+
 // Tx is used to permit clients to implement custom transaction logic.
 type Tx interface {
 	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
