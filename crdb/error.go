@@ -11,18 +11,46 @@ type ErrorCauser interface {
 	Cause() error
 }
 
+// UnwrappableError describes errors compatible with errors.Unwrap.
+type UnwrappableError interface {
+	// Unwrap returns the proximate cause of this error.
+	Unwrap() error
+}
+
+// Unwrap is equivalent to errors.Unwrap. It's implemented here to maintain
+// compatibility with Go versions before 1.13 (when the errors package was
+// introduced).
+// It returns the result of calling the Unwrap method on err, if err's type
+// implements UnwrappableError.
+// Otherwise, Unwrap returns nil.
+func Unwrap(err error) error {
+	u, ok := err.(UnwrappableError)
+	if !ok {
+		return nil
+	}
+	return u.Unwrap()
+}
+
 // errorCause returns the original cause of the error, if possible. An error has
-// a proximate cause if it implements ErrorCauser; the original cause is the
-// first error in the cause chain that does not implement ErrorCauser.
-//
-// errorCause is intentionally equivalent to pkg/errors.Cause.
+// a proximate cause if it's type is compatible with Go's errors.Unwrap() (and
+// also, for legacy reasons, if it implements ErrorCauser); the original cause
+// is the bottom of the causal chain.
 func errorCause(err error) error {
+	// First handle errors implementing ErrorCauser.
 	for err != nil {
 		cause, ok := err.(ErrorCauser)
 		if !ok {
 			break
 		}
 		err = cause.Cause()
+	}
+	// Then handle go1.13+ error wrapping.
+	for {
+		cause := Unwrap(err)
+		if cause == nil {
+			break
+		}
+		err = cause
 	}
 	return err
 }
