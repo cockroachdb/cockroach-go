@@ -20,7 +20,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/pgconn"
 	"github.com/lib/pq"
 )
 
@@ -143,7 +143,7 @@ func errCode(err error) string {
 	case *pq.Error:
 		return string(t.Code)
 
-	case pgx.PgError:
+	case *pgconn.PgError:
 		return t.Code
 
 	default:
