@@ -20,7 +20,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/jackc/pgx/pgconn"
+	"github.com/jackc/pgconn"
 	"github.com/lib/pq"
 )
 
