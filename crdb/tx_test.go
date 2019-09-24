@@ -95,8 +95,16 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 	runTxn := func(wg *sync.WaitGroup, iter *int) <-chan error {
 		errCh := make(chan error, 1)
 		go func() {
+
 			*iter = 0
-			errCh <- executeTxFn(context.Background(), db, nil, func(tx *sql.Tx) error {
+			errCh <- executeTxFn(context.Background(), db, nil, func(tx *sql.Tx) (retErr error) {
+				defer func() {
+					if retErr == nil {
+						return
+					}
+					// Wrap the error so that we test the library's unwrapping.
+					retErr = testError{cause: retErr}
+				}()
 				*iter++
 				bal1, bal2, err := getBalances(tx)
 				if err != nil {
@@ -149,4 +157,16 @@ UPDATE d.t SET balance=balance-100 WHERE acct=2;
 		t.Errorf("expected balances to be restored without error; "+
 			"got acct1=%d, acct2=%d: %s", bal1, bal2, err)
 	}
+}
+
+type testError struct {
+	cause error
+}
+
+func (t testError) Error() string {
+	return "test error"
+}
+
+func (t testError) Unwrap() error {
+	return t.cause
 }
