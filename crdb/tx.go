@@ -24,21 +24,94 @@ import (
 	"github.com/lib/pq"
 )
 
-// ExecuteTx runs fn inside a transaction and retries it as needed.
-// On non-retryable failures, the transaction is aborted and rolled
-// back; on success, the transaction is committed.
+// Execute runs fn and retries it as needed. It is used to add retry handling to
+// the execution of a single statement or single batch of statements. If a
+// multi-statement transaction is being run, use ExecuteTx instead.
+//
+// Retry handling for individual statements (implicit transactions) is usually
+// performed automatically on the CockroachDB SQL gateway. As such, use of this
+// function is generally not necessary. The exception to this rule is that
+// automatic retries for individual statements are disabled once CockroachDB
+// begins streaming results for the statements back to the client. By default,
+// result streaming does not begin until the size of the result being produced
+// for the client, including protocol overhead, exceeds 16KiB. As long as the
+// results of a single statement or batch of statements are known to stay clear
+// of this limit, the client does not need to worry about retries and should not
+// need to use this function.
+//
+// For more information about automatic transaction retries in CockroachDB, see
+// https://cockroachlabs.com/docs/stable/transactions.html#automatic-retries.
+//
+// NOTE: the supplied fn closure should not have external side effects beyond
+// changes to the database.
+//
+// fn must take care when wrapping errors returned from the database driver with
+// additional context. For example, if the SELECT statement fails in the
+// following snippet, the original retryable error will be masked by the call to
+// fmt.Errorf, and the transaction will not be automatically retried.
+//
+//    crdb.Execute(func () error {
+//        rows, err := db.QueryContext(ctx, "SELECT ...")
+//        if err != nil {
+//            return fmt.Errorf("scanning row: %s", err)
+//        }
+//        defer rows.Close()
+//        for rows.Next() {
+//            // ...
+//        }
+//        if err := rows.Err(); err != nil {
+//            return fmt.Errorf("scanning row: %s", err)
+//        }
+//        return nil
+//    })
+//
+// Instead, add context by returning an error that implements the ErrorCauser
+// interface. Either create a custom error type that implements ErrorCauser or
+// use a helper function that does so automatically, like pkg/errors.Wrap:
+//
+//    import "github.com/pkg/errors"
+//
+//    crdb.Execute(func () error {
+//        rows, err := db.QueryContext(ctx, "SELECT ...")
+//        if err != nil {
+//            return errors.Wrap(err, "scanning row")
+//        }
+//        defer rows.Close()
+//        for rows.Next() {
+//            // ...
+//        }
+//        if err := rows.Err(); err != nil {
+//            return errors.Wrap(err, "scanning row")
+//        }
+//        return nil
+//    })
+//
+func Execute(fn func() error) (err error) {
+	for {
+		err = fn()
+		if err == nil || !errIsRetryable(err) {
+			return err
+		}
+	}
+}
+
+// ExecuteTx runs fn inside a transaction and retries it as needed. On
+// non-retryable failures, the transaction is aborted and rolled back; on
+// success, the transaction is committed.
+//
 // There are cases where the state of a transaction is inherently ambiguous: if
 // we err on RELEASE with a communication error it's unclear if the transaction
 // has been committed or not (similar to erroring on COMMIT in other databases).
 // In that case, we return AmbiguousCommitError.
-// There are cases when restarting a transaction fails: we err on ROLLBACK
-// to the SAVEPOINT. In that case, we return a TxnRestartError.
 //
-// For more information about CockroachDB's transaction model see
+// There are cases when restarting a transaction fails: we err on ROLLBACK to
+// the SAVEPOINT. In that case, we return a TxnRestartError.
+//
+// For more information about CockroachDB's transaction model, see
 // https://cockroachlabs.com/docs/stable/transactions.html.
 //
-// NOTE: the supplied fn closure should not have external side
-// effects beyond changes to the database.
+// NOTE: the supplied fn closure should not have external side effects beyond
+// changes to the database.
 //
 // fn must take care when wrapping errors returned from the database driver with
 // additional context. For example, if the UPDATE statement fails in the
@@ -84,6 +157,7 @@ type Tx interface {
 }
 
 // ExecuteInTx runs fn inside tx which should already have begun.
+//
 // *WARNING*: Do not execute any statements on the supplied tx before calling this function.
 // ExecuteInTx will only retry statements that are performed within the supplied
 // closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
@@ -119,13 +193,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			}
 		}
 		// We got an error; let's see if it's a retryable one and, if so, restart.
-		// We look for either:
-		//  - the standard PG errcode SerializationFailureError:40001 or
-		//  - the Cockroach extension errcode RetriableError:CR000. This extension
-		//    has been removed server-side, but support for it has been left here for
-		//    now to maintain backwards compatibility.
-		code := errCode(err)
-		if retryable := (code == "CR000" || code == "40001"); !retryable {
+		if !errIsRetryable(err) {
 			if released {
 				err = newAmbiguousCommitError(err)
 			}
@@ -136,6 +204,16 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			return newTxnRestartError(retryErr, err)
 		}
 	}
+}
+
+func errIsRetryable(err error) bool {
+	// We look for either:
+	//  - the standard PG errcode SerializationFailureError:40001 or
+	//  - the Cockroach extension errcode RetriableError:CR000. This extension
+	//    has been removed server-side, but support for it has been left here for
+	//    now to maintain backwards compatibility.
+	code := errCode(err)
+	return code == "CR000" || code == "40001"
 }
 
 func errCode(err error) string {
