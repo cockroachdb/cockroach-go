@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach-go/testserver"
+	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/pgxpool"
 )
 
 func TestExecuteTx(t *testing.T) {
@@ -84,6 +86,9 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 			if err = rows.Scan(balances[i]); err != nil {
 				return
 			}
+		}
+		if err = rows.Err(); err != nil {
+			return
 		}
 		if i != 2 {
 			err = fmt.Errorf("expected two balances; got %d", i)
@@ -153,6 +158,138 @@ UPDATE d.t SET balance=balance-100 WHERE acct=2;
 			"got txn1=%d, txn2=%d", iters1, iters2)
 	}
 	bal1, bal2, err := getBalances(db)
+	if err != nil || bal1 != 100 || bal2 != 100 {
+		t.Errorf("expected balances to be restored without error; "+
+			"got acct1=%d, acct2=%d: %s", bal1, bal2, err)
+	}
+}
+
+// TestExecInTxPgx verifies transaction retry with pgx library using the classic
+// example of write skew in bank account balance transfers.
+func TestExecInTxPgx(t *testing.T) {
+	ts, err := testserver.NewTestServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	url := ts.PGURL()
+	if url == nil {
+		t.Fatalf("url not found")
+	}
+	defer ts.Stop()
+
+	ctx := context.Background()
+	pool, err := pgxpool.Connect(ctx, ts.PGURL().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	initStmt := `
+CREATE DATABASE d;
+CREATE TABLE d.t (acct INT PRIMARY KEY, balance INT);
+INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
+`
+
+	if _, err := pool.Exec(ctx, initStmt); err != nil {
+		t.Fatal(err)
+	}
+
+	type queryI interface {
+		Query(context.Context, string, ...interface{}) (pgx.Rows, error)
+	}
+
+	getBalances := func(q queryI) (bal1, bal2 int, err error) {
+		var rows pgx.Rows
+		rows, err = q.Query(ctx, `SELECT balance FROM d.t WHERE acct IN (1, 2);`)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+		balances := []*int{&bal1, &bal2}
+		i := 0
+		for ; rows.Next(); i++ {
+			if err = rows.Scan(balances[i]); err != nil {
+				return
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return
+		}
+		if i != 2 {
+			err = fmt.Errorf("expected two balances; got %d", i)
+			return
+		}
+		return
+	}
+
+	runTxn := func(wg *sync.WaitGroup, iter *int) <-chan error {
+		errCh := make(chan error, 1)
+		go func() {
+			*iter = 0
+			errCh <- func() error {
+				tx, err := pool.Begin(ctx)
+				if err != nil {
+					return err
+				}
+				return ExecInTxPgx(ctx, tx, func() (retErr error) {
+					defer func() {
+						if retErr == nil {
+							return
+						}
+						// Wrap the error so that we test the library's unwrapping.
+						retErr = testError{cause: retErr}
+					}()
+					*iter++
+					bal1, bal2, err := getBalances(tx)
+					if err != nil {
+						return err
+					}
+					// If this is the first iteration, wait for the other tx to also read.
+					if *iter == 1 {
+						wg.Done()
+						wg.Wait()
+					}
+					// Now, subtract from one account and give to the other.
+					if bal1 > bal2 {
+						if _, err := tx.Exec(ctx, `
+UPDATE d.t SET balance=balance-100 WHERE acct=1;
+UPDATE d.t SET balance=balance+100 WHERE acct=2;
+`); err != nil {
+							return err
+						}
+					} else {
+						if _, err := tx.Exec(ctx, `
+UPDATE d.t SET balance=balance+100 WHERE acct=1;
+UPDATE d.t SET balance=balance-100 WHERE acct=2;
+`); err != nil {
+							return err
+						}
+					}
+					return nil
+				})
+			}()
+		}()
+		return errCh
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var iters1, iters2 int
+	txn1Err := runTxn(&wg, &iters1)
+	txn2Err := runTxn(&wg, &iters2)
+	if err := <-txn1Err; err != nil {
+		t.Errorf("expected success in txn1; got %s", err)
+	}
+	if err := <-txn2Err; err != nil {
+		t.Errorf("expected success in txn2; got %s", err)
+	}
+	if iters1+iters2 <= 2 {
+		t.Errorf("expected at least one retry between the competing transactions; "+
+			"got txn1=%d, txn2=%d", iters1, iters2)
+	}
+	bal1, bal2, err := getBalances(pool)
 	if err != nil || bal1 != 100 || bal2 != 100 {
 		t.Errorf("expected balances to be restored without error; "+
 			"got acct1=%d, acct2=%d: %s", bal1, bal2, err)

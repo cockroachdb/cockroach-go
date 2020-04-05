@@ -21,6 +21,7 @@ import (
 	"database/sql"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx"
 	"github.com/lib/pq"
 )
 
@@ -204,6 +205,35 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			return newTxnRestartError(retryErr, err)
 		}
 	}
+}
+
+// Wrapper to make pgx.Tx compatible with crdb.Tx interface and don't lose the context.
+type pgxTxWrap struct {
+	ctx context.Context
+	tx  pgx.Tx
+}
+
+func (txw *pgxTxWrap) Commit() error {
+	// Use context that we store in the wrapper to pass it to pgx.Tx.Commit()
+	return txw.tx.Commit(txw.ctx)
+}
+
+func (txw *pgxTxWrap) Rollback() error {
+	// Use context that we store in the wrapper to pass it to pgx.Tx.Rollback()
+	return txw.tx.Rollback(txw.ctx)
+}
+
+func (txw *pgxTxWrap) ExecContext(ctx context.Context, sql string, args ...interface{}) (sql.Result, error) {
+	// Since .ExecContext() accepts a context we don't need to use the one that we store in the wrapper.
+	_, err := txw.tx.Exec(ctx, sql, args...)
+	// crdb.ExecuteInTx doesn't actually care about the Result, just the error.
+	return nil, err
+}
+
+func ExecInTxPgx(ctx context.Context, tx pgx.Tx, fn func() error) error {
+	// Initialize the wrapper and pass the current context.
+	txw := &pgxTxWrap{ctx: ctx, tx: tx}
+	return ExecuteInTx(ctx, txw, fn)
 }
 
 func errIsRetryable(err error) bool {
