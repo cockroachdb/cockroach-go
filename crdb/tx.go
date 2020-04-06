@@ -24,8 +24,8 @@ import (
 )
 
 // Execute runs fn and retries it as needed. It is used to add retry handling to
-// the execution of a single statement or single batch of statements. If a
-// multi-statement transaction is being run, use ExecuteTx instead.
+// the execution of a single statement. If a multi-statement transaction is
+// being run, use ExecuteTx instead.
 //
 // Retry handling for individual statements (implicit transactions) is usually
 // performed automatically on the CockroachDB SQL gateway. As such, use of this
