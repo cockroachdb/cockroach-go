@@ -18,155 +18,71 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/cockroachdb/cockroach-go/testserver"
 )
 
-func TestExecuteTx(t *testing.T) {
-	testExecuteTxInner(t, ExecuteTx)
-}
-
-func TestExecuteInTx(t *testing.T) {
-	executeTx := func(
-		ctx context.Context,
-		db *sql.DB,
-		opts *sql.TxOptions,
-		fn func(*sql.Tx) error,
-	) error {
-		tx, err := db.BeginTx(ctx, opts)
-		if err != nil {
-			return err
-		}
-		return ExecuteInTx(ctx, tx, func() error { return fn(tx) })
-	}
-	testExecuteTxInner(t, executeTx)
-}
-
 // TestExecuteTx verifies transaction retry using the classic
 // example of write skew in bank account balance transfers.
-func testExecuteTxInner(
-	t *testing.T,
-	executeTxFn func(
-		context.Context,
-		*sql.DB,
-		*sql.TxOptions,
-		func(*sql.Tx) error,
-	) error,
-) {
+func TestExecuteTx(t *testing.T) {
 	db, stop := testserver.NewDBForTest(t)
 	defer stop()
+	ctx := context.Background()
 
+	if err := ExecuteTxGenericTest(ctx, stdlibWriteSkewTest{db: db}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type stdlibWriteSkewTest struct {
+	db *sql.DB
+}
+
+var _ WriteSkewTest = stdlibWriteSkewTest{}
+
+func (t stdlibWriteSkewTest) Init(ctx context.Context) error {
 	initStmt := `
 CREATE DATABASE d;
 CREATE TABLE d.t (acct INT PRIMARY KEY, balance INT);
 INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 `
-	if _, err := db.Exec(initStmt); err != nil {
-		t.Fatal(err)
-	}
-
-	type queryI interface {
-		Query(string, ...interface{}) (*sql.Rows, error)
-	}
-
-	getBalances := func(q queryI) (bal1, bal2 int, err error) {
-		var rows *sql.Rows
-		rows, err = q.Query(`SELECT balance FROM d.t WHERE acct IN (1, 2);`)
-		if err != nil {
-			return
-		}
-		defer rows.Close()
-		balances := []*int{&bal1, &bal2}
-		i := 0
-		for ; rows.Next(); i++ {
-			if err = rows.Scan(balances[i]); err != nil {
-				return
-			}
-		}
-		if i != 2 {
-			err = fmt.Errorf("expected two balances; got %d", i)
-			return
-		}
-		return
-	}
-
-	runTxn := func(wg *sync.WaitGroup, iter *int) <-chan error {
-		errCh := make(chan error, 1)
-		go func() {
-
-			*iter = 0
-			errCh <- executeTxFn(context.Background(), db, nil, func(tx *sql.Tx) (retErr error) {
-				defer func() {
-					if retErr == nil {
-						return
-					}
-					// Wrap the error so that we test the library's unwrapping.
-					retErr = testError{cause: retErr}
-				}()
-				*iter++
-				bal1, bal2, err := getBalances(tx)
-				if err != nil {
-					return err
-				}
-				// If this is the first iteration, wait for the other tx to also read.
-				if *iter == 1 {
-					wg.Done()
-					wg.Wait()
-				}
-				// Now, subtract from one account and give to the other.
-				if bal1 > bal2 {
-					if _, err := tx.Exec(`
-UPDATE d.t SET balance=balance-100 WHERE acct=1;
-UPDATE d.t SET balance=balance+100 WHERE acct=2;
-`); err != nil {
-						return err
-					}
-				} else {
-					if _, err := tx.Exec(`
-UPDATE d.t SET balance=balance+100 WHERE acct=1;
-UPDATE d.t SET balance=balance-100 WHERE acct=2;
-`); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
-		}()
-		return errCh
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	var iters1, iters2 int
-	txn1Err := runTxn(&wg, &iters1)
-	txn2Err := runTxn(&wg, &iters2)
-	if err := <-txn1Err; err != nil {
-		t.Errorf("expected success in txn1; got %s", err)
-	}
-	if err := <-txn2Err; err != nil {
-		t.Errorf("expected success in txn2; got %s", err)
-	}
-	if iters1+iters2 <= 2 {
-		t.Errorf("expected at least one retry between the competing transactions; "+
-			"got txn1=%d, txn2=%d", iters1, iters2)
-	}
-	bal1, bal2, err := getBalances(db)
-	if err != nil || bal1 != 100 || bal2 != 100 {
-		t.Errorf("expected balances to be restored without error; "+
-			"got acct1=%d, acct2=%d: %s", bal1, bal2, err)
-	}
+	_, err := t.db.ExecContext(ctx, initStmt)
+	return err
 }
 
-type testError struct {
-	cause error
+func (t stdlibWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
+	return ExecuteTx(ctx, t.db, nil /* opts */, func(tx *sql.Tx) error {
+		return fn(tx)
+	})
 }
 
-func (t testError) Error() string {
-	return "test error"
+func (t stdlibWriteSkewTest) GetBalances(ctx context.Context, txi interface{}) (int, int, error) {
+	tx := txi.(*sql.Tx)
+	var rows *sql.Rows
+	rows, err := tx.QueryContext(ctx, `SELECT balance FROM d.t WHERE acct IN (1, 2);`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	var bal1, bal2 int
+	balances := []*int{&bal1, &bal2}
+	i := 0
+	for ; rows.Next(); i++ {
+		if err = rows.Scan(balances[i]); err != nil {
+			return 0, 0, err
+		}
+	}
+	if i != 2 {
+		return 0, 0, fmt.Errorf("expected two balances; got %d", i)
+	}
+	return bal1, bal2, nil
 }
 
-func (t testError) Unwrap() error {
-	return t.cause
+func (t stdlibWriteSkewTest) UpdateBalance(
+	ctx context.Context, txi interface{}, acct, delta int,
+) error {
+	tx := txi.(*sql.Tx)
+	_, err := tx.ExecContext(ctx, `UPDATE d.t SET balance=balance+$1 WHERE acct=$2;`, delta, acct)
+	return err
 }
