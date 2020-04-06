@@ -20,7 +20,6 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/jackc/pgconn"
 	"github.com/lib/pq"
 )
 
@@ -139,71 +138,36 @@ func Execute(fn func() error) (err error) {
 //    })
 //
 func ExecuteTx(
-	ctx context.Context, db *sql.DB, txopts *sql.TxOptions, fn func(*sql.Tx) error,
+	ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(*sql.Tx) error,
 ) error {
 	// Start a transaction.
-	tx, err := db.BeginTx(ctx, txopts)
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
-	return ExecuteInTx(ctx, tx, func() error { return fn(tx) })
+	return ExecuteInTx(ctx, stdlibTxnAdapter{tx}, func() error { return fn(tx) })
 }
 
-// Tx is used to permit clients to implement custom transaction logic.
-type Tx interface {
-	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
-	Commit() error
-	Rollback() error
+type stdlibTxnAdapter struct {
+	tx *sql.Tx
 }
 
-// ExecuteInTx runs fn inside tx which should already have begun.
-//
-// *WARNING*: Do not execute any statements on the supplied tx before calling this function.
-// ExecuteInTx will only retry statements that are performed within the supplied
-// closure (fn). Any statements performed on the tx before ExecuteInTx is invoked will *not*
-// be re-run if the transaction needs to be retried.
-//
-// fn is subject to the same restrictions as the fn passed to ExecuteTx.
-func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
-	defer func() {
-		if err == nil {
-			// Ignore commit errors. The tx has already been committed by RELEASE.
-			_ = tx.Commit()
-		} else {
-			// We always need to execute a Rollback() so sql.DB releases the
-			// connection.
-			_ = tx.Rollback()
-		}
-	}()
-	// Specify that we intend to retry this txn in case of CockroachDB retryable
-	// errors.
-	if _, err = tx.ExecContext(ctx, "SAVEPOINT cockroach_restart"); err != nil {
-		return err
-	}
+var _ Tx = stdlibTxnAdapter{}
 
-	for {
-		released := false
-		err = fn()
-		if err == nil {
-			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
-			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
-			released = true
-			if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
-				return nil
-			}
-		}
-		// We got an error; let's see if it's a retryable one and, if so, restart.
-		if !errIsRetryable(err) {
-			if released {
-				err = newAmbiguousCommitError(err)
-			}
-			return err
-		}
+// Exec is part of the tx interface.
+func (tx stdlibTxnAdapter) Exec(ctx context.Context, q string, args ...interface{}) error {
+	_, err := tx.tx.ExecContext(ctx, q, args...)
+	return err
+}
 
-		if _, retryErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
-			return newTxnRestartError(retryErr, err)
-		}
-	}
+// Commit is part of the tx interface.
+func (tx stdlibTxnAdapter) Commit(context.Context) error {
+	return tx.tx.Commit()
+}
+
+// Commit is part of the tx interface.
+func (tx stdlibTxnAdapter) Rollback(context.Context) error {
+	return tx.tx.Rollback()
 }
 
 func errIsRetryable(err error) bool {
@@ -221,10 +185,17 @@ func errCode(err error) string {
 	case *pq.Error:
 		return string(t.Code)
 
-	case *pgconn.PgError:
-		return t.Code
+	case errWithSQLState:
+		return t.SQLState()
 
 	default:
 		return ""
 	}
+}
+
+// errWithSQLState is implemented by pgx (pgconn.PgError).
+//
+// TODO(andrei): Add this method to pq.Error and stop depending on lib/pq.
+type errWithSQLState interface {
+	SQLState() string
 }
