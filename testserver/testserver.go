@@ -18,7 +18,7 @@
 // from your PATH.
 //
 // To use, run as follows:
-//   import "github.com/cockroachdb/cockroach-go/testserver"
+//   import "github.com/cockroachdb/cockroach-go/v2/testserver"
 //   import "testing"
 //   import "time"
 //
