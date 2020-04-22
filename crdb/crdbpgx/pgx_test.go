@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/cockroachdb/cockroach-go/testserver"
-	"github.com/jackc/pgx"
-	"github.com/jackc/pgx/pgxpool"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"testing"
 )
 
