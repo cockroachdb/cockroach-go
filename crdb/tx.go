@@ -64,9 +64,16 @@ import (
 //        return nil
 //    })
 //
-// Instead, add context by returning an error that implements the ErrorCauser
-// interface. Either create a custom error type that implements ErrorCauser or
-// use a helper function that does so automatically, like pkg/errors.Wrap:
+// Instead, add context by returning an error that implements either:
+// - a `Cause() error` method, in the manner of github.com/pkg/errors, or
+// - an `Unwrap() error` method, in the manner of the Go 1.13 standard
+//   library.
+//
+// To achieve this, you can implement your own error type, or use
+// `errors.Wrap()` from github.com/pkg/errors or
+// github.com/cockroachdb/errors or a similar package, or use go
+// 1.13's special `%w` formatter with fmt.Errorf(), for example
+// fmt.Errorf("scanning row: %w", err).
 //
 //    import "github.com/pkg/errors"
 //
@@ -124,9 +131,16 @@ func Execute(fn func() error) (err error) {
 //        return nil
 //    })
 //
-// Instead, add context by returning an error that implements the ErrorCauser
-// interface. Either create a custom error type that implements ErrorCauser or
-// use a helper function that does so automatically, like pkg/errors.Wrap:
+// Instead, add context by returning an error that implements either:
+// - a `Cause() error` method, in the manner of github.com/pkg/errors, or
+// - an `Unwrap() error` method, in the manner of the Go 1.13 standard
+//   library.
+//
+// To achieve this, you can implement your own error type, or use
+// `errors.Wrap()` from github.com/pkg/errors or
+// github.com/cockroachdb/errors or a similar package, or use go
+// 1.13's special `%w` formatter with fmt.Errorf(), for example
+// fmt.Errorf("scanning row: %w", err).
 //
 //    import "github.com/pkg/errors"
 //
@@ -137,9 +151,7 @@ func Execute(fn func() error) (err error) {
 //        return nil
 //    })
 //
-func ExecuteTx(
-	ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(*sql.Tx) error,
-) error {
+func ExecuteTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(*sql.Tx) error) error {
 	// Start a transaction.
 	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
