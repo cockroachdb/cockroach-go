@@ -23,7 +23,7 @@ func ExecuteTx(ctx context.Context, db *sqlx.DB, opts *sql.TxOptions, fn func(*s
 	return crdb.ExecuteInTx(ctx, sqlxTxAdapter{tx}, func() error { return fn(tx) })
 }
 
-// gormTxAdapter adapts a *gorm.DB to a crdb.Tx.
+// sqlxTxAdapter adapts a *sqlx.tx to a crdb.Tx.
 type sqlxTxAdapter struct {
 	*sqlx.Tx
 }
