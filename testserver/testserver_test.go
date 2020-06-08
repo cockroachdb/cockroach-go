@@ -35,9 +35,6 @@ func TestPGURLWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
 	url := ts.PGURL().String()
 	if trimmed := strings.TrimSpace(url); url != trimmed {
 		t.Errorf("unexpected whitespace in server URL: %q", url)

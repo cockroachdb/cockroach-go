@@ -109,7 +109,7 @@ func NewDBForTest(t *testing.T) (*sql.DB, func()) {
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
 func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
-	ts, err := StartTestServer()
+	ts, err := NewTestServer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,9 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 	}
 }
 
-// NewTestServer creates a new TestServer, but does not start it.
+// NewTestServer creates a new TestServer and starts it.
+// It also waits until the server is ready to accept clients,
+// so it safe to connect to the server returned by this function right away.
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
@@ -182,36 +184,16 @@ func NewTestServer() (*TestServer, error) {
 		listeningURLFile: listeningURLFile,
 	}
 	ts.pgURL.set = make(chan struct{})
-	return ts, nil
-}
-
-// StartTestServer creates and starts a new TestServer.
-// It also waits until the server is ready to accept clients,
-// so it safe to connect to the server returned by this function right away.
-func StartTestServer() (*TestServer, error) {
-	ts, err := NewTestServer()
-	if err != nil {
-		return nil, err
-	}
 
 	if err := ts.Start(); err != nil {
 		return nil, err
 	}
 
-	url := ts.PGURL()
-	if url == nil {
+	if ts.PGURL() == nil {
 		return nil, errors.New("testserver: url not found")
 	}
 
-	db, err := sql.Open("postgres", url.String())
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = db.Close()
-	}()
-
-	if err := ts.WaitForInit(db); err != nil {
+	if err := ts.WaitForInit(); err != nil {
 		return nil, err
 	}
 
@@ -244,8 +226,13 @@ func (ts *TestServer) setPGURL(u *url.URL) {
 }
 
 // WaitForInit retries until a connection is successfully established.
-func (ts *TestServer) WaitForInit(db *sql.DB) error {
+func (ts *TestServer) WaitForInit() error {
 	var err error
+	db, err := sql.Open("postgres", ts.PGURL().String())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err

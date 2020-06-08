@@ -16,7 +16,6 @@ package crdbgorm
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
@@ -29,17 +28,6 @@ import (
 func TestExecuteTx(t *testing.T) {
 	ts, err := testserver.NewTestServer()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
-	url := ts.PGURL()
-	db, err := sql.Open("postgres", url.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ts.WaitForInit(db); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
