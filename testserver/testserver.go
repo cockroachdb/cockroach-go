@@ -109,29 +109,18 @@ func NewDBForTest(t *testing.T) (*sql.DB, func()) {
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
 func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
-	ts, err := NewTestServer()
+	ts, err := StartTestServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
-
 	url := ts.PGURL()
-	if url == nil {
-		t.Fatalf("url not found")
-	}
 	if len(database) > 0 {
 		url.Path = database
 	}
 
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ts.WaitForInit(db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,6 +182,37 @@ func NewTestServer() (*TestServer, error) {
 		listeningURLFile: listeningURLFile,
 	}
 	ts.pgURL.set = make(chan struct{})
+	return ts, nil
+}
+
+// StartTestServer creates and starts a new TestServer.
+func StartTestServer() (*TestServer, error) {
+	ts, err := NewTestServer()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ts.Start(); err != nil {
+		return nil, err
+	}
+
+	url := ts.PGURL()
+	if url == nil {
+		return nil, errors.New("testserver: url not found")
+	}
+
+	db, err := sql.Open("postgres", url.String())
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	if err := ts.WaitForInit(db); err != nil {
+		return nil, err
+	}
+
 	return ts, nil
 }
 
