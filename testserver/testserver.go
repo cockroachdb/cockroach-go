@@ -186,6 +186,8 @@ func NewTestServer() (*TestServer, error) {
 }
 
 // StartTestServer creates and starts a new TestServer.
+// It also waits until the server is ready to accept clients,
+// so it safe to connect to the server returned by this function right away.
 func StartTestServer() (*TestServer, error) {
 	ts, err := NewTestServer()
 	if err != nil {
