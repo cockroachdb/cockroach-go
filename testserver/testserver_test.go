@@ -35,6 +35,14 @@ func TestRunServer(t *testing.T) {
 			name:          "Secure",
 			instantiation: func() (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
 		},
+		{
+			name:          "InsecureTenant",
+			instantiation: func() (*sql.DB, func()) { return testserver.NewTenantDBForTest(t, "") },
+		},
+		{
+			name:          "SecureTenant",
+			instantiation: func() (*sql.DB, func()) { return testserver.NewTenantDBForTest(t, "", testserver.SecureOpt()) },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation()
@@ -57,5 +65,18 @@ func TestPGURLWhitespace(t *testing.T) {
 	url := ts.PGURL().String()
 	if trimmed := strings.TrimSpace(url); url != trimmed {
 		t.Errorf("unexpected whitespace in server URL: %q", url)
+	}
+}
+
+func TestTenant(t *testing.T) {
+	db, stop := testserver.NewTenantDBForTest(t, "")
+	defer stop()
+
+	if _, err := db.Exec("SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec("SELECT crdb_internal.create_tenant(123)"); err == nil {
+		t.Fatal("expected an error when creating a tenant since secondary tenants should not be able to do so")
 	}
 }
