@@ -15,6 +15,7 @@
 package testserver_test
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -22,11 +23,26 @@ import (
 )
 
 func TestRunServer(t *testing.T) {
-	db, stop := testserver.NewDBForTest(t)
-	defer stop()
-
-	if _, err := db.Exec("SELECT 1"); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name          string
+		instantiation func() (*sql.DB, func())
+	}{
+		{
+			name:          "Insecure",
+			instantiation: func() (*sql.DB, func()) { return testserver.NewDBForTest(t) },
+		},
+		{
+			name:          "Secure",
+			instantiation: func() (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, stop := tc.instantiation()
+			defer stop()
+			if _, err := db.Exec("SELECT 1"); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
