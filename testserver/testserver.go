@@ -99,8 +99,8 @@ type TestServer struct {
 // opens a SQL database connection to it. Returns a sql *DB instance a
 // shutdown function. The caller is responsible for executing the
 // returned shutdown function on exit.
-func NewDBForTest(t *testing.T) (*sql.DB, func()) {
-	return NewDBForTestWithDatabase(t, "")
+func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
+	return NewDBForTestWithDatabase(t, "", opts...)
 }
 
 // NewDBForTestWithDatabase creates a new CockroachDB TestServer
@@ -108,8 +108,8 @@ func NewDBForTest(t *testing.T) (*sql.DB, func()) {
 // specified, the returned connection will explicitly connect to
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
-func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
-	ts, err := NewTestServer()
+func NewDBForTestWithDatabase(t *testing.T, database string, opts ...testServerOpt) (*sql.DB, func()) {
+	ts, err := NewTestServer(opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +141,30 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 	}
 }
 
+type testServerOpt func(args *testServerArgs)
+
+type testServerArgs struct {
+	secure bool
+}
+
+// SecureOpt is a TestServer option that can be passed to NewTestServer to
+// enable secure mode.
+func SecureOpt() testServerOpt {
+	return func(args *testServerArgs) {
+		args.secure = true
+	}
+}
+
 // NewTestServer creates a new TestServer, but does not start it.
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
-func NewTestServer() (*TestServer, error) {
+func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
+	serverArgs := &testServerArgs{}
+	for _, applyOptToArgs := range opts {
+		applyOptToArgs(serverArgs)
+	}
+
 	var cockroachBinary string
 	var err error
 	if len(*customBinary) > 0 {
@@ -165,18 +184,51 @@ func NewTestServer() (*TestServer, error) {
 		return nil, fmt.Errorf("could not create temp directory: %s", err)
 	}
 
-	logDir := filepath.Join(baseDir, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return nil, fmt.Errorf("could not create logs directory: %s: %s", logDir, err)
+	mkDir := func(name string) (string, error) {
+		path := filepath.Join(baseDir, name)
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return "", fmt.Errorf("could not create %s directory: %s: %s", name, path, err)
+		}
+		return path, nil
+	}
+	logDir, err := mkDir("logs")
+	if err != nil {
+		return nil, err
+	}
+	certsDir, err := mkDir("certs")
+	if err != nil {
+		return nil, err
 	}
 
 	listeningURLFile := filepath.Join(baseDir, "listen-url")
+
+	secureOpt := "--insecure"
+	if serverArgs.secure {
+		// Create certificates.
+		certArgs := []string{
+			"--certs-dir=" + certsDir,
+			"--ca-key=" + filepath.Join(certsDir, "ca.key"),
+		}
+		for _, args := range [][]string{
+			// Create the CA cert and key pair.
+			{"cert", "create-ca"},
+			// Create cert and key pair for the cockroach node.
+			{"cert", "create-node", "localhost"},
+			// Create cert and key pair for the root user (SQL client).
+			{"cert", "create-client", "root"},
+		} {
+			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
+				return nil, err
+			}
+		}
+		secureOpt = "--certs-dir=" + certsDir
+	}
 
 	args := []string{
 		cockroachBinary,
 		"start",
 		"--logtostderr",
-		"--insecure",
+		secureOpt,
 		"--host=localhost",
 		"--port=0",
 		"--http-port=0",
