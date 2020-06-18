@@ -78,7 +78,25 @@ const (
 )
 
 // TestServer is a helper to run a real cockroach node.
-type TestServer struct {
+type TestServer interface {
+	// Start starts the server.
+	Start() error
+	// Stop stops the server and cleans up any associated resources.
+	Stop()
+
+	// Stdout returns the entire contents of the process' stdout.
+	Stdout() string
+	// Stdout returns the entire contents of the process' stderr.
+	Stderr() string
+	// PGURL returns the postgres connection URL to this server.
+	PGURL() *url.URL
+	// WaitForInit retries until a SQL connection is successfully established to
+	// this server.
+	WaitForInit(db *sql.DB) error
+}
+
+// testServerImpl is a TestServer implementation.
+type testServerImpl struct {
 	mu      sync.RWMutex
 	state   int
 	baseDir string
@@ -159,7 +177,7 @@ func SecureOpt() testServerOpt {
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
-func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
+func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	serverArgs := &testServerArgs{}
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
@@ -236,7 +254,7 @@ func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
 		"--listening-url-file=" + listeningURLFile,
 	}
 
-	ts := &TestServer{
+	ts := &testServerImpl{
 		state:            stateNew,
 		baseDir:          baseDir,
 		args:             args,
@@ -249,12 +267,12 @@ func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
 }
 
 // Stdout returns the entire contents of the process' stdout.
-func (ts *TestServer) Stdout() string {
+func (ts *testServerImpl) Stdout() string {
 	return ts.stdoutBuf.String()
 }
 
 // Stderr returns the entire contents of the process' stderr.
-func (ts *TestServer) Stderr() string {
+func (ts *testServerImpl) Stderr() string {
 	return ts.stderrBuf.String()
 }
 
@@ -263,18 +281,18 @@ func (ts *TestServer) Stderr() string {
 //
 // It blocks until the network URL is determined and does not timeout,
 // relying instead on test timeouts.
-func (ts *TestServer) PGURL() *url.URL {
+func (ts *testServerImpl) PGURL() *url.URL {
 	<-ts.pgURL.set
 	return ts.pgURL.u
 }
 
-func (ts *TestServer) setPGURL(u *url.URL) {
+func (ts *testServerImpl) setPGURL(u *url.URL) {
 	ts.pgURL.u = u
 	close(ts.pgURL.set)
 }
 
 // WaitForInit retries until a connection is successfully established.
-func (ts *TestServer) WaitForInit(db *sql.DB) error {
+func (ts *testServerImpl) WaitForInit(db *sql.DB) error {
 	var err error
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
@@ -286,7 +304,7 @@ func (ts *TestServer) WaitForInit(db *sql.DB) error {
 	return err
 }
 
-func (ts *TestServer) pollListeningURLFile() error {
+func (ts *testServerImpl) pollListeningURLFile() error {
 	var data []byte
 	for {
 		ts.mu.Lock()
@@ -318,7 +336,7 @@ func (ts *TestServer) pollListeningURLFile() error {
 // Start runs the process, returning an error on any problems,
 // including being unable to start, but not unexpected failure.
 // It should only be called once in the lifetime of a TestServer object.
-func (ts *TestServer) Start() error {
+func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
 	if ts.state != stateNew {
 		ts.mu.Unlock()
@@ -411,7 +429,7 @@ func (ts *TestServer) Start() error {
 // Stop kills the process if it is still running and cleans its directory.
 // It should only be called once in the lifetime of a TestServer object.
 // Logs fatal if the process has already failed.
-func (ts *TestServer) Stop() {
+func (ts *testServerImpl) Stop() {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 
