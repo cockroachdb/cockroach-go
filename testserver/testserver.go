@@ -77,6 +77,12 @@ const (
 	stateFailed
 )
 
+const (
+	// First tenant ID to use is 2 since 1 belongs to the system tenant. Refer
+	// to NewTenantServer for more information.
+	firstTenantID = 2
+)
+
 // TestServer is a helper to run a real cockroach node.
 type TestServer interface {
 	// Start starts the server.
@@ -97,27 +103,33 @@ type TestServer interface {
 
 // testServerImpl is a TestServer implementation.
 type testServerImpl struct {
-	mu      sync.RWMutex
-	state   int
-	baseDir string
-	pgURL   struct {
+	mu         sync.RWMutex
+	serverArgs testServerArgs
+	state      int
+	baseDir    string
+	pgURL      struct {
 		set chan struct{}
 		u   *url.URL
 	}
 	cmd              *exec.Cmd
-	args             []string
+	cmdArgs          []string
 	stdout           string
 	stderr           string
 	stdoutBuf        logWriter
 	stderrBuf        logWriter
 	listeningURLFile string
+
+	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
+	// more information.
+	curTenantID int
 }
 
 // NewDBForTest creates a new CockroachDB TestServer instance and
-// opens a SQL database connection to it. Returns a sql *DB instance a
+// opens a SQL database connection to it. Returns a sql *DB instance and a
 // shutdown function. The caller is responsible for executing the
 // returned shutdown function on exit.
 func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
+	t.Helper()
 	return NewDBForTestWithDatabase(t, "", opts...)
 }
 
@@ -127,11 +139,11 @@ func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
 func NewDBForTestWithDatabase(t *testing.T, database string, opts ...testServerOpt) (*sql.DB, func()) {
+	t.Helper()
 	ts, err := NewTestServer(opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if err := ts.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +185,11 @@ func SecureOpt() testServerOpt {
 	}
 }
 
+const (
+	logsDirName  = "logs"
+	certsDirName = "certs"
+)
+
 // NewTestServer creates a new TestServer, but does not start it.
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
@@ -209,11 +226,11 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 		}
 		return path, nil
 	}
-	logDir, err := mkDir("logs")
+	logDir, err := mkDir(logsDirName)
 	if err != nil {
 		return nil, err
 	}
-	certsDir, err := mkDir("certs")
+	certsDir, err := mkDir(certsDirName)
 	if err != nil {
 		return nil, err
 	}
@@ -255,12 +272,14 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	}
 
 	ts := &testServerImpl{
+		serverArgs:       *serverArgs,
 		state:            stateNew,
 		baseDir:          baseDir,
-		args:             args,
+		cmdArgs:          args,
 		stdout:           filepath.Join(logDir, "cockroach.stdout"),
 		stderr:           filepath.Join(logDir, "cockroach.stderr"),
 		listeningURLFile: listeningURLFile,
+		curTenantID:      firstTenantID,
 	}
 	ts.pgURL.set = make(chan struct{})
 	return ts, nil
@@ -345,7 +364,7 @@ func (ts *testServerImpl) Start() error {
 	ts.state = stateRunning
 	ts.mu.Unlock()
 
-	ts.cmd = exec.Command(ts.args[0], ts.args[1:]...)
+	ts.cmd = exec.Command(ts.cmdArgs[0], ts.cmdArgs[1:]...)
 	ts.cmd.Env = []string{"COCKROACH_MAX_OFFSET=1ns"}
 
 	if len(ts.stdout) > 0 {
@@ -372,7 +391,7 @@ func (ts *testServerImpl) Start() error {
 
 	err := ts.cmd.Start()
 	if ts.cmd.Process != nil {
-		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.args, " "))
+		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
 	}
 	if err != nil {
 		log.Print(err.Error())
@@ -415,13 +434,15 @@ func (ts *testServerImpl) Start() error {
 		ts.mu.Unlock()
 	}()
 
-	go func() {
-		if err := ts.pollListeningURLFile(); err != nil {
-			log.Printf("%v", err)
-			close(ts.pgURL.set)
-			ts.Stop()
-		}
-	}()
+	if ts.pgURL.u == nil {
+		go func() {
+			if err := ts.pollListeningURLFile(); err != nil {
+				log.Printf("%v", err)
+				close(ts.pgURL.set)
+				ts.Stop()
+			}
+		}()
+	}
 
 	return nil
 }
