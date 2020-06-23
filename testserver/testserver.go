@@ -77,29 +77,59 @@ const (
 	stateFailed
 )
 
+const (
+	// First tenant ID to use is 2 since 1 belongs to the system tenant. Refer
+	// to NewTenantServer for more information.
+	firstTenantID = 2
+)
+
 // TestServer is a helper to run a real cockroach node.
-type TestServer struct {
-	mu      sync.RWMutex
-	state   int
-	baseDir string
-	pgURL   struct {
+type TestServer interface {
+	// Start starts the server.
+	Start() error
+	// Stop stops the server and cleans up any associated resources.
+	Stop()
+
+	// Stdout returns the entire contents of the process' stdout.
+	Stdout() string
+	// Stdout returns the entire contents of the process' stderr.
+	Stderr() string
+	// PGURL returns the postgres connection URL to this server.
+	PGURL() *url.URL
+	// WaitForInit retries until a SQL connection is successfully established to
+	// this server.
+	WaitForInit(db *sql.DB) error
+}
+
+// testServerImpl is a TestServer implementation.
+type testServerImpl struct {
+	mu         sync.RWMutex
+	serverArgs testServerArgs
+	state      int
+	baseDir    string
+	pgURL      struct {
 		set chan struct{}
 		u   *url.URL
 	}
 	cmd              *exec.Cmd
-	args             []string
+	cmdArgs          []string
 	stdout           string
 	stderr           string
 	stdoutBuf        logWriter
 	stderrBuf        logWriter
 	listeningURLFile string
+
+	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
+	// more information.
+	curTenantID int
 }
 
 // NewDBForTest creates a new CockroachDB TestServer instance and
-// opens a SQL database connection to it. Returns a sql *DB instance a
+// opens a SQL database connection to it. Returns a sql *DB instance and a
 // shutdown function. The caller is responsible for executing the
 // returned shutdown function on exit.
 func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
+	t.Helper()
 	return NewDBForTestWithDatabase(t, "", opts...)
 }
 
@@ -109,11 +139,11 @@ func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
 func NewDBForTestWithDatabase(t *testing.T, database string, opts ...testServerOpt) (*sql.DB, func()) {
+	t.Helper()
 	ts, err := NewTestServer(opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if err := ts.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -155,11 +185,16 @@ func SecureOpt() testServerOpt {
 	}
 }
 
+const (
+	logsDirName  = "logs"
+	certsDirName = "certs"
+)
+
 // NewTestServer creates a new TestServer, but does not start it.
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
-func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
+func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	serverArgs := &testServerArgs{}
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
@@ -191,11 +226,11 @@ func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
 		}
 		return path, nil
 	}
-	logDir, err := mkDir("logs")
+	logDir, err := mkDir(logsDirName)
 	if err != nil {
 		return nil, err
 	}
-	certsDir, err := mkDir("certs")
+	certsDir, err := mkDir(certsDirName)
 	if err != nil {
 		return nil, err
 	}
@@ -236,25 +271,27 @@ func NewTestServer(opts ...testServerOpt) (*TestServer, error) {
 		"--listening-url-file=" + listeningURLFile,
 	}
 
-	ts := &TestServer{
+	ts := &testServerImpl{
+		serverArgs:       *serverArgs,
 		state:            stateNew,
 		baseDir:          baseDir,
-		args:             args,
+		cmdArgs:          args,
 		stdout:           filepath.Join(logDir, "cockroach.stdout"),
 		stderr:           filepath.Join(logDir, "cockroach.stderr"),
 		listeningURLFile: listeningURLFile,
+		curTenantID:      firstTenantID,
 	}
 	ts.pgURL.set = make(chan struct{})
 	return ts, nil
 }
 
 // Stdout returns the entire contents of the process' stdout.
-func (ts *TestServer) Stdout() string {
+func (ts *testServerImpl) Stdout() string {
 	return ts.stdoutBuf.String()
 }
 
 // Stderr returns the entire contents of the process' stderr.
-func (ts *TestServer) Stderr() string {
+func (ts *testServerImpl) Stderr() string {
 	return ts.stderrBuf.String()
 }
 
@@ -263,18 +300,18 @@ func (ts *TestServer) Stderr() string {
 //
 // It blocks until the network URL is determined and does not timeout,
 // relying instead on test timeouts.
-func (ts *TestServer) PGURL() *url.URL {
+func (ts *testServerImpl) PGURL() *url.URL {
 	<-ts.pgURL.set
 	return ts.pgURL.u
 }
 
-func (ts *TestServer) setPGURL(u *url.URL) {
+func (ts *testServerImpl) setPGURL(u *url.URL) {
 	ts.pgURL.u = u
 	close(ts.pgURL.set)
 }
 
 // WaitForInit retries until a connection is successfully established.
-func (ts *TestServer) WaitForInit(db *sql.DB) error {
+func (ts *testServerImpl) WaitForInit(db *sql.DB) error {
 	var err error
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
@@ -286,7 +323,7 @@ func (ts *TestServer) WaitForInit(db *sql.DB) error {
 	return err
 }
 
-func (ts *TestServer) pollListeningURLFile() error {
+func (ts *testServerImpl) pollListeningURLFile() error {
 	var data []byte
 	for {
 		ts.mu.Lock()
@@ -318,7 +355,7 @@ func (ts *TestServer) pollListeningURLFile() error {
 // Start runs the process, returning an error on any problems,
 // including being unable to start, but not unexpected failure.
 // It should only be called once in the lifetime of a TestServer object.
-func (ts *TestServer) Start() error {
+func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
 	if ts.state != stateNew {
 		ts.mu.Unlock()
@@ -327,7 +364,7 @@ func (ts *TestServer) Start() error {
 	ts.state = stateRunning
 	ts.mu.Unlock()
 
-	ts.cmd = exec.Command(ts.args[0], ts.args[1:]...)
+	ts.cmd = exec.Command(ts.cmdArgs[0], ts.cmdArgs[1:]...)
 	ts.cmd.Env = []string{"COCKROACH_MAX_OFFSET=1ns"}
 
 	if len(ts.stdout) > 0 {
@@ -354,7 +391,7 @@ func (ts *TestServer) Start() error {
 
 	err := ts.cmd.Start()
 	if ts.cmd.Process != nil {
-		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.args, " "))
+		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
 	}
 	if err != nil {
 		log.Print(err.Error())
@@ -397,13 +434,15 @@ func (ts *TestServer) Start() error {
 		ts.mu.Unlock()
 	}()
 
-	go func() {
-		if err := ts.pollListeningURLFile(); err != nil {
-			log.Printf("%v", err)
-			close(ts.pgURL.set)
-			ts.Stop()
-		}
-	}()
+	if ts.pgURL.u == nil {
+		go func() {
+			if err := ts.pollListeningURLFile(); err != nil {
+				log.Printf("%v", err)
+				close(ts.pgURL.set)
+				ts.Stop()
+			}
+		}()
+	}
 
 	return nil
 }
@@ -411,7 +450,7 @@ func (ts *TestServer) Start() error {
 // Stop kills the process if it is still running and cleans its directory.
 // It should only be called once in the lifetime of a TestServer object.
 // Logs fatal if the process has already failed.
-func (ts *TestServer) Stop() {
+func (ts *testServerImpl) Stop() {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 
