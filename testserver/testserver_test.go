@@ -88,14 +88,8 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
 	tenant, err := ts.(tenantInterface).NewTenantServer()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tenant.Start(); err != nil {
 		t.Fatal(err)
 	}
 	url := tenant.PGURL()
@@ -104,9 +98,6 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 	}
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tenant.WaitForInit(db); err != nil {
 		t.Fatal(err)
 	}
 	return db, func() {

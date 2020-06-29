@@ -98,7 +98,7 @@ type TestServer interface {
 	PGURL() *url.URL
 	// WaitForInit retries until a SQL connection is successfully established to
 	// this server.
-	WaitForInit(db *sql.DB) error
+	WaitForInit() error
 }
 
 // testServerImpl is a TestServer implementation.
@@ -326,7 +326,7 @@ func (ts *testServerImpl) WaitForInit() error {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("WaitForInit: %v", err)
+        log.Printf("WaitForInit: Trying again after error: %v", err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return err

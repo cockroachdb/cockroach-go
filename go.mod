@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/jackc/pgx/v4 v4.6.0
 	github.com/jinzhu/gorm v1.9.12
+	github.com/jmoiron/sqlx v1.2.0
 	github.com/lib/pq v1.4.0
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/shopspring/decimal v0.0.0-20200419222939-1884f454f8ea // indirect
