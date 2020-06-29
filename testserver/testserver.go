@@ -114,14 +114,7 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
-
 	url := ts.PGURL()
-	if url == nil {
-		t.Fatalf("url not found")
-	}
 	if len(database) > 0 {
 		url.Path = database
 	}
@@ -131,17 +124,15 @@ func NewDBForTestWithDatabase(t *testing.T, database string) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
-	if err := ts.WaitForInit(db); err != nil {
-		t.Fatal(err)
-	}
-
 	return db, func() {
 		_ = db.Close()
 		ts.Stop()
 	}
 }
 
-// NewTestServer creates a new TestServer, but does not start it.
+// NewTestServer creates a new TestServer and starts it.
+// It also waits until the server is ready to accept clients,
+// so it safe to connect to the server returned by this function right away.
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
@@ -193,6 +184,19 @@ func NewTestServer() (*TestServer, error) {
 		listeningURLFile: listeningURLFile,
 	}
 	ts.pgURL.set = make(chan struct{})
+
+	if err := ts.Start(); err != nil {
+		return nil, err
+	}
+
+	if ts.PGURL() == nil {
+		return nil, errors.New("testserver: url not found")
+	}
+
+	if err := ts.WaitForInit(); err != nil {
+		return nil, err
+	}
+
 	return ts, nil
 }
 
@@ -222,8 +226,13 @@ func (ts *TestServer) setPGURL(u *url.URL) {
 }
 
 // WaitForInit retries until a connection is successfully established.
-func (ts *TestServer) WaitForInit(db *sql.DB) error {
+func (ts *TestServer) WaitForInit() error {
 	var err error
+	db, err := sql.Open("postgres", ts.PGURL().String())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
