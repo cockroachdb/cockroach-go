@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cockroachdb/cockroach-go/testserver"
+	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
 func TestRunServer(t *testing.T) {
@@ -57,9 +57,6 @@ func TestRunServer(t *testing.T) {
 func TestPGURLWhitespace(t *testing.T) {
 	ts, err := testserver.NewTestServer()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ts.Start(); err != nil {
 		t.Fatal(err)
 	}
 	url := ts.PGURL().String()

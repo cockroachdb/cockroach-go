@@ -17,7 +17,7 @@ package crdbgorm
 import (
 	"context"
 	"database/sql"
-	"github.com/cockroachdb/cockroach-go/crdb"
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/jinzhu/gorm"
 )
 

@@ -16,9 +16,9 @@ package crdbpgx
 
 import (
 	"context"
-	"github.com/cockroachdb/cockroach-go/crdb"
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
 
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v4"
 )
 
 // ExecuteTx runs fn inside a transaction and retries it as needed. On
