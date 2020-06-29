@@ -98,7 +98,7 @@ type TestServer interface {
 	PGURL() *url.URL
 	// WaitForInit retries until a SQL connection is successfully established to
 	// this server.
-	WaitForInit(db *sql.DB) error
+	WaitForInit() error
 }
 
 // testServerImpl is a TestServer implementation.

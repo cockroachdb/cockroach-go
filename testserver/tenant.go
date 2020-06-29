@@ -31,7 +31,7 @@ func (ts *testServerImpl) isTenant() bool {
 }
 
 // NewTenantServer creates and returns a new SQL tenant pointed at the receiver,
-// which acts as a KV server.
+// which acts as a KV server, and starts it.
 // The SQL tenant is responsible for all SQL processing and does not store any
 // physical KV pairs. It issues KV RPCs to the receiver. The idea is to be able
 // to create multiple SQL tenants each with an exclusive keyspace accessed
@@ -63,7 +63,6 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 	if ts.serverArgs.secure {
 		secureFlag = "--certs-dir=" + filepath.Join(ts.baseDir, "certs")
 	}
-
 	// Create a new tenant.
 	pgURL := ts.PGURL()
 	if pgURL == nil {
@@ -74,7 +73,7 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 		return nil, err
 	}
 	defer db.Close()
-	if err := ts.WaitForInit(db); err != nil {
+	if err := ts.WaitForInit(); err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(fmt.Sprintf("SELECT crdb_internal.create_tenant(%d)", tenantID)); err != nil {
@@ -124,5 +123,11 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 	tenantURL := *pgURL
 	tenantURL.Host = sqlAddr
 	tenant.setPGURL(&tenantURL)
+	if err := tenant.Start(); err != nil {
+        return nil, err
+	}
+	if err := ts.WaitForInit(); err != nil {
+		return nil, err
+	}
 	return tenant, nil
 }
