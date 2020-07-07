@@ -8,8 +8,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"github.com/cockroachdb/cockroach-go/crdb"
-	"github.com/cockroachdb/cockroach-go/testserver"
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
 // TestExecuteTx verifies transaction retry using the classic
@@ -19,15 +19,12 @@ func TestExecuteTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
 	url := ts.PGURL()
 	db, err := sqlx.Connect("postgres", url.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.WaitForInit(db.DB); err != nil {
+	if err := ts.WaitForInit(); err != nil {
 		t.Fatal(err)
 	}
 

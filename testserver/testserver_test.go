@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cockroachdb/cockroach-go/testserver"
+	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
 func TestRunServer(t *testing.T) {
@@ -59,9 +59,6 @@ func TestPGURLWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
 	url := ts.PGURL().String()
 	if trimmed := strings.TrimSpace(url); url != trimmed {
 		t.Errorf("unexpected whitespace in server URL: %q", url)
@@ -91,14 +88,8 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.Start(); err != nil {
-		t.Fatal(err)
-	}
 	tenant, err := ts.(tenantInterface).NewTenantServer()
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tenant.Start(); err != nil {
 		t.Fatal(err)
 	}
 	url := tenant.PGURL()
@@ -107,9 +98,6 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 	}
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tenant.WaitForInit(db); err != nil {
 		t.Fatal(err)
 	}
 	return db, func() {
