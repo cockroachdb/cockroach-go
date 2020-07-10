@@ -138,7 +138,9 @@ func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
 // specified, the returned connection will explicitly connect to
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
-func NewDBForTestWithDatabase(t *testing.T, database string, opts ...testServerOpt) (*sql.DB, func()) {
+func NewDBForTestWithDatabase(
+	t *testing.T, database string, opts ...testServerOpt,
+) (*sql.DB, func()) {
 	t.Helper()
 	ts, err := NewTestServer(opts...)
 	if err != nil {
@@ -252,7 +254,7 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 
 	args := []string{
 		cockroachBinary,
-		"start",
+		"start-single-node",
 		"--logtostderr",
 		secureOpt,
 		"--host=localhost",
