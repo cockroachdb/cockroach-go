@@ -277,7 +277,29 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	ts.pgURL.set = make(chan struct{})
 
 	if err := ts.Start(); err != nil {
-		return nil, err
+        // v19.1 and earlier do not have the `start-single-node` subcommand,
+        // so retry with `start`.
+        // TODO(rafi): Remove the `start` once we stop testing 19.1.
+        if !strings.Contains(ts.Stderr(), "unknown command \"start-single-node\"") {
+            return nil, err
+        }
+        log.Printf("Retrying after error with start-single-node: %s", err)
+        args[1] = "start"
+        ts = &testServerImpl{
+            serverArgs:       *serverArgs,
+            state:            stateNew,
+            baseDir:          baseDir,
+            cmdArgs:          args,
+            stdout:           filepath.Join(logDir, "cockroach.stdout"),
+            stderr:           filepath.Join(logDir, "cockroach.stderr"),
+            listeningURLFile: listeningURLFile,
+            curTenantID:      firstTenantID,
+        }
+        ts.pgURL.set = make(chan struct{})
+
+        if err = ts.Start(); err != nil {
+            return nil, err
+        }
 	}
 
 	if ts.PGURL() == nil {
