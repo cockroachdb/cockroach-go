@@ -46,6 +46,7 @@
 package testserver
 
 import (
+	"bufio"
 	"bytes"
 	"database/sql"
 	"errors"
@@ -66,6 +67,8 @@ import (
 
 	// Import postgres driver.
 	_ "github.com/lib/pq"
+
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -252,9 +255,33 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 		secureOpt = "--certs-dir=" + certsDir
 	}
 
+	// v19.1 and earlier do not have the `start-single-node` subcommand,
+	// so use `start` for those versions.
+	// TODO(rafi): Remove the version check and `start` once we stop testing 19.1.
+	versionCmd := exec.Command(cockroachBinary, "version")
+	versionOutput, err := versionCmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(bytes.NewReader(versionOutput))
+	versionLine, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	versionLineTokens := strings.Fields(versionLine)
+	v, err := version.Parse(versionLineTokens[2])
+	if err != nil {
+		return nil, err
+	}
+	startCmd := "start-single-node"
+	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
+		startCmd = "start"
+	}
+
+
 	args := []string{
 		cockroachBinary,
-		"start-single-node",
+		startCmd,
 		"--logtostderr",
 		secureOpt,
 		"--host=localhost",
@@ -277,29 +304,7 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	ts.pgURL.set = make(chan struct{})
 
 	if err := ts.Start(); err != nil {
-        // v19.1 and earlier do not have the `start-single-node` subcommand,
-        // so retry with `start`.
-        // TODO(rafi): Remove the `start` once we stop testing 19.1.
-        if !strings.Contains(ts.Stderr(), "unknown command \"start-single-node\"") {
-            return nil, err
-        }
-        log.Printf("Retrying after error with start-single-node: %s", err)
-        args[1] = "start"
-        ts = &testServerImpl{
-            serverArgs:       *serverArgs,
-            state:            stateNew,
-            baseDir:          baseDir,
-            cmdArgs:          args,
-            stdout:           filepath.Join(logDir, "cockroach.stdout"),
-            stderr:           filepath.Join(logDir, "cockroach.stderr"),
-            listeningURLFile: listeningURLFile,
-            curTenantID:      firstTenantID,
-        }
-        ts.pgURL.set = make(chan struct{})
-
-        if err = ts.Start(); err != nil {
-            return nil, err
-        }
+		return nil, err
 	}
 
 	if ts.PGURL() == nil {
@@ -350,7 +355,7 @@ func (ts *testServerImpl) WaitForInit() error {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-        log.Printf("WaitForInit: Trying again after error: %v", err)
+		log.Printf("WaitForInit: Trying again after error: %v", err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return err
