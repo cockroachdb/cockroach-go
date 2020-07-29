@@ -71,7 +71,7 @@ import (
 	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
-var customBinary = flag.String("cockroach-binary", "", "Use specified cockroach binary")
+var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
 
 const (
 	stateNew = 1 + iota
@@ -197,9 +197,15 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	}
 
 	var cockroachBinary string
+
+	if len(*customBinaryFlag) > 0 {
+		cockroachBinary = *customBinaryFlag
+	} else if customBinaryEnv := os.Getenv("COCKROACH_BINARY"); customBinaryEnv != "" {
+		cockroachBinary = customBinaryEnv
+	}
+
 	var err error
-	if len(*customBinary) > 0 {
-		cockroachBinary = *customBinary
+	if cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
 	} else if cockroachBinary, err = downloadLatestBinary(); err != nil {
 		log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
