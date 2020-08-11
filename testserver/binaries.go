@@ -17,6 +17,7 @@ package testserver
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"mime"
 	"net/http"
@@ -90,7 +91,20 @@ func downloadLatestBinary() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = response.Body.Close() }()
+	defer func() {
+
+		// To reuse same tcp connection
+		// Response body is read and closed.
+		// Read the previous response body if it's
+		// small to do connection reuse
+
+		const bodySize = 2 << 20
+
+		if response.ContentLength < bodySize {
+			io.CopyN(ioutil.Discard, response.Body, bodySize)
+		}
+		response.Body.Close()
+	}()
 
 	if response.StatusCode != 200 {
 		return "", fmt.Errorf("error downloading %s: %d (%s)", url, response.StatusCode, response.Status)
