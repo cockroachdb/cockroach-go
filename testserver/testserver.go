@@ -124,7 +124,9 @@ type testServerImpl struct {
 
 	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
 	// more information.
-	curTenantID int
+	curTenantID  int
+	proxyAddr    string      // empty if no sql proxy running yet
+	proxyProcess *os.Process // empty if no sql proxy running yet
 }
 
 // NewDBForTest creates a new CockroachDB TestServer instance and
@@ -283,7 +285,6 @@ func NewTestServer(opts ...testServerOpt) (TestServer, error) {
 	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
 		startCmd = "start"
 	}
-
 
 	args := []string{
 		cockroachBinary,
@@ -510,6 +511,10 @@ func (ts *testServerImpl) Stop() {
 	if ts.state != stateStopped {
 		// Only call kill if not running. It could have exited properly.
 		_ = ts.cmd.Process.Kill()
+
+		if p := ts.proxyProcess; p != nil {
+			_ = p.Kill()
+		}
 	}
 
 	// Only cleanup on intentional stops.
