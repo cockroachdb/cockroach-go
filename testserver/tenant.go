@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 )
@@ -42,6 +43,7 @@ func (ts *testServerImpl) isTenant() bool {
 // NewTenantServer, and subsequently cast the TestServer obtained from
 // NewTestServer to this interface. Refer to the tests for an example.
 func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
+	cockroachBinary := ts.cmdArgs[0]
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -61,7 +63,20 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 
 	secureFlag := "--insecure"
 	if ts.serverArgs.secure {
-		secureFlag = "--certs-dir=" + filepath.Join(ts.baseDir, "certs")
+		certsDir := filepath.Join(ts.baseDir, "certs")
+		secureFlag = "--certs-dir=" + certsDir
+		certArgs := []string{
+			secureFlag,
+			"--ca-key=" + filepath.Join(certsDir, "ca.key"),
+		}
+		for _, args := range [][]string{
+			// Create tenant client certificate.
+			{"mt", "cert", "create-tenant-client", fmt.Sprint(tenantID)},
+		} {
+			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	// Create a new tenant.
 	if err := ts.WaitForInit(); err != nil {
@@ -97,7 +112,7 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 	}
 
 	args := []string{
-		ts.cmdArgs[0],
+		cockroachBinary,
 		"mt",
 		"start-sql",
 		secureFlag,

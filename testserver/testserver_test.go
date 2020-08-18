@@ -44,9 +44,6 @@ func TestRunServer(t *testing.T) {
 			instantiation: func() (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */) },
 		},
 	} {
-		if tc.name == "SecureTenant" {
-			t.Skip("Skipping due to https://github.com/cockroachdb/cockroach-go/issues/87")
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation()
 			defer stop()
