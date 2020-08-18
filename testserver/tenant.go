@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -36,13 +37,19 @@ func (ts *testServerImpl) isTenant() bool {
 // The SQL tenant is responsible for all SQL processing and does not store any
 // physical KV pairs. It issues KV RPCs to the receiver. The idea is to be able
 // to create multiple SQL tenants each with an exclusive keyspace accessed
-// through the KV server.
+// through the KV server. The proxy bool determines whether to spin up a
+// (singleton) proxy instance to which to direct the returned server's `PGUrl`
+// method.
+//
 // WARNING: This functionality is internal and experimental and subject to
 // change. See cockroach mt start-sql --help.
 // NOTE: To use this, a caller must first define an interface that includes
 // NewTenantServer, and subsequently cast the TestServer obtained from
 // NewTestServer to this interface. Refer to the tests for an example.
-func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
+func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
+	if proxy && !ts.serverArgs.secure {
+		return nil, errors.New("proxy can not be used with insecure mode")
+	}
 	cockroachBinary := ts.cmdArgs[0]
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
@@ -62,8 +69,8 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 	}
 
 	secureFlag := "--insecure"
+	certsDir := filepath.Join(ts.baseDir, "certs")
 	if ts.serverArgs.secure {
-		certsDir := filepath.Join(ts.baseDir, "certs")
 		secureFlag = "--certs-dir=" + certsDir
 		certArgs := []string{
 			secureFlag,
@@ -100,14 +107,59 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 	//  that the mt start-sql command supports --listening-url-file so that this
 	//  test harness can subsequently read the postgres url. The current
 	//  approach is to do our best to find a free port and use that.
-	l, err := net.Listen("tcp", ":0")
+	addr := func() (string, error) {
+		l, err := net.Listen("tcp", ":0")
+		if err != nil {
+			return "", err
+		}
+		// Use localhost because of certificate validation issues otherwise
+		// (something about IP SANs).
+		addr := "localhost:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+		if err := l.Close(); err != nil {
+			return "", err
+		}
+		return addr, nil
+	}
+	sqlAddr, err := addr()
 	if err != nil {
 		return nil, err
 	}
-	// Use localhost because of certificate validation issues otherwise
-	// (something about IP SANs).
-	sqlAddr := "localhost:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
-	if err := l.Close(); err != nil {
+
+	proxyAddr, err := func() (string, error) {
+		<-ts.pgURL.set
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		if ts.proxyAddr != "" {
+			return ts.proxyAddr, nil
+		}
+		var err error
+		ts.proxyAddr, err = addr()
+		if err != nil {
+			return "", err
+		}
+
+		args := []string{
+			"mt",
+			"start-proxy",
+			"--listen-addr",
+			ts.proxyAddr,
+			"--target-addr",
+			sqlAddr,
+			"--listen-cert",
+			filepath.Join(certsDir, "node.crt"),
+			"--listen-key",
+			filepath.Join(certsDir, "node.key"),
+		}
+		cmd := exec.Command(cockroachBinary, args...)
+		if err := cmd.Start(); err != nil {
+			return "", err
+		}
+		ts.proxyProcess = cmd.Process
+
+		return ts.proxyAddr, nil
+	}()
+	if err != nil {
 		return nil, err
 	}
 
@@ -133,16 +185,49 @@ func (ts *testServerImpl) NewTenantServer() (TestServer, error) {
 		//  ports.
 		listeningURLFile: "",
 	}
-	tenant.pgURL.set = make(chan struct{})
-	// Copy and overwrite the TestServer's url host:port.
+
+	// Start the tenant.
+	// Initialize direct connection to the tenant.
 	tenantURL := *pgURL
 	tenantURL.Host = sqlAddr
+	tenant.pgURL.set = make(chan struct{})
+
 	tenant.setPGURL(&tenantURL)
 	if err := tenant.Start(); err != nil {
-        return nil, err
+		return nil, err
 	}
 	if err := tenant.WaitForInit(); err != nil {
 		return nil, err
 	}
+
+	tenantDB, err := sql.Open("postgres", tenantURL.String())
+	defer tenantDB.Close()
+
+	if proxy {
+		// Copy and overwrite the tenant's host:port, and allow root to login via password (proxy does not do client
+		// certs).
+
+		const (
+			rootLogin    = "root"
+			rootPassword = "admin"
+		)
+		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, rootLogin, rootPassword); err != nil {
+			return nil, err
+		}
+
+		// NB: need the lock since *tenantURL is owned by `tenant`.
+		tenant.mu.Lock()
+		tenantURL.Host = proxyAddr
+		v := tenantURL.Query()
+		// Massage the query string. The proxy expects the magic clsuter name 'prancing-pony'. We remove the client
+		// certs since we won't be using them (and they don't work through the proxy anyway).
+		v.Add("options", "--cluster=prancing-pony")
+		v.Del("sslcert")
+		v.Del("sslkey")
+		tenantURL.RawQuery = v.Encode()
+		tenantURL.User = url.UserPassword(rootLogin, rootPassword)
+		tenant.mu.Unlock()
+	}
+
 	return tenant, nil
 }
