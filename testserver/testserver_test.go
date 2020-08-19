@@ -25,30 +25,33 @@ import (
 func TestRunServer(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
-		instantiation func() (*sql.DB, func())
+		instantiation func(*testing.T) (*sql.DB, func())
 	}{
 		{
 			name:          "Insecure",
-			instantiation: func() (*sql.DB, func()) { return testserver.NewDBForTest(t) },
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t) },
 		},
 		{
 			name:          "Secure",
-			instantiation: func() (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
 		},
 		{
-			name:          "InsecureTenant",
-			instantiation: func() (*sql.DB, func()) { return newTenantDBForTest(t, false /* secure */) },
+			name: "InsecureTenant",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(t, false /* secure */, false /* proxy */)
+			},
 		},
 		{
 			name:          "SecureTenant",
-			instantiation: func() (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */) },
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */, false /* proxy */) },
+		},
+		{
+			name:          "SecureTenantThroughProxy",
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */, true /* proxy */) },
 		},
 	} {
-		if tc.name == "SecureTenant" {
-			t.Skip("Skipping due to https://github.com/cockroachdb/cockroach-go/issues/87")
-		}
 		t.Run(tc.name, func(t *testing.T) {
-			db, stop := tc.instantiation()
+			db, stop := tc.instantiation(t)
 			defer stop()
 			if _, err := db.Exec("SELECT 1"); err != nil {
 				t.Fatal(err)
@@ -71,13 +74,13 @@ func TestPGURLWhitespace(t *testing.T) {
 // tenantInterface is defined in order to use tenant-related methods on the
 // TestServer.
 type tenantInterface interface {
-	NewTenantServer() (testserver.TestServer, error)
+	NewTenantServer(proxy bool) (testserver.TestServer, error)
 }
 
 // newTenantDBForTest is a testing helper function that starts a TestServer
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
-func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
+func newTenantDBForTest(t *testing.T, secure bool, proxy bool) (*sql.DB, func()) {
 	t.Helper()
 	var (
 		ts  testserver.TestServer
@@ -91,7 +94,7 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenant, err := ts.(tenantInterface).NewTenantServer()
+	tenant, err := ts.(tenantInterface).NewTenantServer(proxy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +114,7 @@ func newTenantDBForTest(t *testing.T, secure bool) (*sql.DB, func()) {
 }
 
 func TestTenant(t *testing.T) {
-	db, stop := newTenantDBForTest(t, false /* secure */)
+	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */)
 	defer stop()
 	if _, err := db.Exec("SELECT 1"); err != nil {
 		t.Fatal(err)
