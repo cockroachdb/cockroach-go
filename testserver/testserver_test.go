@@ -22,7 +22,10 @@ import (
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
+const noPW = ""
+
 func TestRunServer(t *testing.T) {
+	const testPW = "foobar"
 	for _, tc := range []struct {
 		name          string
 		instantiation func(*testing.T) (*sql.DB, func())
@@ -32,22 +35,44 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t) },
 		},
 		{
-			name:          "Secure",
+			name:          "SecureClientCert",
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
+		},
+		{
+			name: "SecurePassword",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.RootPasswordOpt(testPW))
+			},
 		},
 		{
 			name: "InsecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, false /* secure */, false /* proxy */)
+				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
 			},
 		},
 		{
-			name:          "SecureTenant",
-			instantiation: func(t *testing.T) (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */, false /* proxy */) },
+			name: "SecureTenant",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW)
+			},
 		},
 		{
-			name:          "SecureTenantThroughProxy",
-			instantiation: func(t *testing.T) (*sql.DB, func()) { return newTenantDBForTest(t, true /* secure */, true /* proxy */) },
+			name: "SecureTenantCustomPassword",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW)
+			},
+		},
+		{
+			name: "SecureTenantThroughProxy",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW)
+			},
+		},
+		{
+			name: "SecureTenantThroughProxyCustomPassword",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW)
+			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,17 +105,16 @@ type tenantInterface interface {
 // newTenantDBForTest is a testing helper function that starts a TestServer
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
-func newTenantDBForTest(t *testing.T, secure bool, proxy bool) (*sql.DB, func()) {
+func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string) (*sql.DB, func()) {
 	t.Helper()
-	var (
-		ts  testserver.TestServer
-		err error
-	)
+	var opts []testserver.TestServerOpt
 	if secure {
-		ts, err = testserver.NewTestServer(testserver.SecureOpt())
-	} else {
-		ts, err = testserver.NewTestServer()
+		opts = append(opts, testserver.SecureOpt())
 	}
+	if pw != "" {
+		opts = append(opts, testserver.RootPasswordOpt(pw))
+	}
+	ts, err := testserver.NewTestServer(opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +138,7 @@ func newTenantDBForTest(t *testing.T, secure bool, proxy bool) (*sql.DB, func())
 }
 
 func TestTenant(t *testing.T) {
-	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */)
+	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
 	defer stop()
 	if _, err := db.Exec("SELECT 1"); err != nil {
 		t.Fatal(err)

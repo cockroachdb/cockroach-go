@@ -113,6 +113,10 @@ type testServerImpl struct {
 	pgURL      struct {
 		set chan struct{}
 		u   *url.URL
+		// The original URL is preserved here if we are using a custom password.
+		// In that case, the one below uses client certificates, if secure (and
+		// no password otherwise).
+		orig url.URL
 	}
 	cmd              *exec.Cmd
 	cmdArgs          []string
@@ -133,7 +137,7 @@ type testServerImpl struct {
 // opens a SQL database connection to it. Returns a sql *DB instance and a
 // shutdown function. The caller is responsible for executing the
 // returned shutdown function on exit.
-func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
+func NewDBForTest(t *testing.T, opts ...TestServerOpt) (*sql.DB, func()) {
 	t.Helper()
 	return NewDBForTestWithDatabase(t, "", opts...)
 }
@@ -144,7 +148,7 @@ func NewDBForTest(t *testing.T, opts ...testServerOpt) (*sql.DB, func()) {
 // it. Returns a sql *DB instance a shutdown function. The caller is
 // responsible for executing the returned shutdown function on exit.
 func NewDBForTestWithDatabase(
-	t *testing.T, database string, opts ...testServerOpt,
+	t *testing.T, database string, opts ...TestServerOpt,
 ) (*sql.DB, func()) {
 	t.Helper()
 	ts, err := NewTestServer(opts...)
@@ -167,17 +171,28 @@ func NewDBForTestWithDatabase(
 	}
 }
 
-type testServerOpt func(args *testServerArgs)
+// TestServerOpt is passed to NewTestServer.
+type TestServerOpt func(args *testServerArgs)
 
 type testServerArgs struct {
 	secure bool
+	rootPW string // if nonempty, set as pw for root
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
 // enable secure mode.
-func SecureOpt() testServerOpt {
+func SecureOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.secure = true
+	}
+}
+
+// RootPasswordOpt is a TestServer option that, when passed to NewTestServer,
+// sets the given password for the root user (and returns a URL using it from
+// PGURL(). This avoids having to use client certs.
+func RootPasswordOpt(pw string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.rootPW = pw
 	}
 }
 
@@ -192,7 +207,7 @@ const (
 // The cockroach binary for your OS and ARCH is downloaded automatically.
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
-func NewTestServer(opts ...testServerOpt) (TestServer, error) {
+func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	serverArgs := &testServerArgs{}
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
@@ -391,6 +406,23 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
 	if err != nil {
 		return fmt.Errorf("failed to parse SQL URL: %v", err)
+	}
+	ts.pgURL.orig = *u
+	if pw := ts.serverArgs.rootPW; pw != "" {
+		db, err := sql.Open("postgres", u.String())
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if _, err := db.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", pw); err != nil {
+			return err
+		}
+
+		v := u.Query()
+		v.Del("sslkey")
+		v.Del("sslcert")
+		u.RawQuery = v.Encode()
+		u.User = url.UserPassword("root", pw)
 	}
 	ts.setPGURL(u)
 
