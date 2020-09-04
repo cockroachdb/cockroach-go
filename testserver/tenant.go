@@ -187,8 +187,9 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 
 	// Start the tenant.
-	// Initialize direct connection to the tenant.
-	tenantURL := *pgURL
+	// Initialize direct connection to the tenant. We need to use `orig` instead of `pgurl` because if the test server
+	// is using a root password, this password does not carry over to the tenant; client certs will, though.
+	tenantURL := ts.pgURL.orig
 	tenantURL.Host = sqlAddr
 	tenant.pgURL.set = make(chan struct{})
 
@@ -203,29 +204,37 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	tenantDB, err := sql.Open("postgres", tenantURL.String())
 	defer tenantDB.Close()
 
+	rootPassword := ""
 	if proxy {
-		// Copy and overwrite the tenant's host:port, and allow root to login via password (proxy does not do client
-		// certs).
+		// The proxy does not do client certs, so always set a password if we use the proxy.
+		rootPassword = "admin"
+	}
+	if pw := ts.serverArgs.rootPW; pw != "" {
+		rootPassword = pw
+	}
 
-		const (
-			rootLogin    = "root"
-			rootPassword = "admin"
-		)
-		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, rootLogin, rootPassword); err != nil {
+	if rootPassword != "" {
+		// Allow root to login via password.
+		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", rootPassword); err != nil {
 			return nil, err
 		}
 
 		// NB: need the lock since *tenantURL is owned by `tenant`.
 		tenant.mu.Lock()
-		tenantURL.Host = proxyAddr
 		v := tenantURL.Query()
-		// Massage the query string. The proxy expects the magic clsuter name 'prancing-pony'. We remove the client
-		// certs since we won't be using them (and they don't work through the proxy anyway).
-		v.Add("options", "--cluster=prancing-pony")
+		if proxy {
+			// If using proxy, point url at the proxy instead of at the tenant directly.
+			tenantURL.Host = proxyAddr
+			// Massage the query string. The proxy expects the magic cluster name 'prancing-pony'. We remove the client
+			// certs since we won't be using them (and they don't work through the proxy anyway).
+			v.Add("options", "--cluster=prancing-pony")
+		}
+
+		// Client certs should not be used; we're using password auth.
 		v.Del("sslcert")
 		v.Del("sslkey")
 		tenantURL.RawQuery = v.Encode()
-		tenantURL.User = url.UserPassword(rootLogin, rootPassword)
+		tenantURL.User = url.UserPassword("root", rootPassword)
 		tenant.mu.Unlock()
 	}
 
