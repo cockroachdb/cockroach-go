@@ -16,6 +16,7 @@ package crdb
 
 import (
 	"context"
+    "time"
 )
 
 // Tx abstracts the operations needed by ExecuteInTx so that different
@@ -54,6 +55,9 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
+    sleepTime := time.Millisecond * 10
+    retryCount := 0
+
 	for {
 		released := false
 		err = fn()
@@ -75,6 +79,15 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 
 		if retryErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
 			return newTxnRestartError(retryErr, err)
-		}
+        }
+
+        retryCount++
+        if retryCount > 50 {
+            return err
+        }
+        time.Sleep(sleepTime)
+        if sleepTime < time.Second {
+            sleepTime = sleepTime * 2
+        }
 	}
 }
