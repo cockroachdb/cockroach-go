@@ -42,6 +42,21 @@ func newAmbiguousCommitError(err error) *AmbiguousCommitError {
 	return &AmbiguousCommitError{txError{cause: err}}
 }
 
+// MaxRetriesExceededError represents an error caused by retying the transaction
+// too many times, without it ever succeeding.
+type MaxRetriesExceededError struct {
+	txError
+	msg string
+}
+
+func newMaxRetriesExceededError(err error, maxRetries int) *MaxRetriesExceededError {
+	const msgPattern = "retrying txn failed after %d attempts. original error: %s."
+	return &MaxRetriesExceededError{
+		txError: txError{cause: err},
+		msg:     fmt.Sprintf(msgPattern, maxRetries, err),
+	}
+}
+
 // TxnRestartError represents an error when restarting a transaction. `cause` is
 // the error from restarting the txn and `retryCause` is the original error which
 // triggered the restart.
