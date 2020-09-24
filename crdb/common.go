@@ -54,6 +54,9 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
+	// TODO(rafi): make the maxRetryCount configurable. Maybe pass it in the context?)
+	const maxRetries = 50
+	retryCount := 0
 	for {
 		released := false
 		err = fn()
@@ -75,6 +78,11 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 
 		if retryErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
 			return newTxnRestartError(retryErr, err)
+		}
+
+		retryCount++
+		if retryCount > maxRetries {
+			return newMaxRetriesExceededError(err, maxRetries)
 		}
 	}
 }
