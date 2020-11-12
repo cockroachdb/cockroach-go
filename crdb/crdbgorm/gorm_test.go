@@ -17,10 +17,13 @@ package crdbgorm
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
-	"github.com/jinzhu/gorm"
-	"testing"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // TestExecuteTx verifies transaction retry using the classic example of write
@@ -32,12 +35,12 @@ func TestExecuteTx(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	gormDB, err := gorm.Open("postgres", ts.PGURL().String())
+	gormDB, err := gorm.Open(postgres.Open(ts.PGURL().String()), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Set to true and gorm logs all the queries.
-	gormDB.LogMode(false)
+	// Set to logger.Info and gorm logs all the queries.
+	gormDB.Logger.LogMode(logger.Silent)
 
 	if err := crdb.ExecuteTxGenericTest(ctx, gormWriteSkewTest{db: gormDB}); err != nil {
 		t.Fatal(err)
