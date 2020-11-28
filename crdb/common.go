@@ -26,6 +26,17 @@ type Tx interface {
 	Rollback(context.Context) error
 }
 
+type maxRetriesKey string
+
+// WithMaxRetries sets the max retry attempts in the event of retryable
+// transaction errors.
+//
+// For a retries value of 0 the transaction will be retried infinitely for
+// retryable transaction errors.
+func WithMaxRetries(ctx context.Context, retries int) context.Context {
+	return context.WithValue(ctx, maxRetriesKey("maxRetries"), retries)
+}
+
 // ExecuteInTx runs fn inside tx. This method is primarily intended for internal
 // use. See other packages for higher-level, framework-specific ExecuteTx()
 // functions.
@@ -54,9 +65,23 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
-	// TODO(rafi): make the maxRetryCount configurable. Maybe pass it in the context?)
-	const maxRetries = 50
+	// Sane default value
+	maxRetries := 50
+
+	// Override max retries from context
+	if v, ok := ctx.Value(maxRetriesKey("maxRetries")).(int); ok {
+		maxRetries = v
+	}
+
 	retryCount := 0
+	retriesExceeded := func() bool {
+		if maxRetries == 0 {
+			return false
+		}
+		retryCount++
+		return retryCount > maxRetries
+	}
+
 	for {
 		released := false
 		err = fn()
@@ -80,8 +105,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			return newTxnRestartError(retryErr, err)
 		}
 
-		retryCount++
-		if retryCount > maxRetries {
+		if retriesExceeded() {
 			return newMaxRetriesExceededError(err, maxRetries)
 		}
 	}
