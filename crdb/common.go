@@ -26,7 +26,7 @@ type Tx interface {
 	Rollback(context.Context) error
 }
 
-type maxRetriesKey string
+type maxRetriesKey struct{}
 
 // WithMaxRetries sets the max retry attempts in the event of retryable
 // transaction errors.
@@ -34,7 +34,7 @@ type maxRetriesKey string
 // For a retries value of 0 the transaction will be retried infinitely for
 // retryable transaction errors.
 func WithMaxRetries(ctx context.Context, retries int) context.Context {
-	return context.WithValue(ctx, maxRetriesKey("maxRetries"), retries)
+	return context.WithValue(ctx, maxRetriesKey{}, retries)
 }
 
 // ExecuteInTx runs fn inside tx. This method is primarily intended for internal
@@ -77,7 +77,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 	maxRetries := 50
 
 	// Override max retries from context
-	if v, ok := ctx.Value(maxRetriesKey("maxRetries")).(int); ok {
+	if v, ok := ctx.Value(maxRetriesKey{}).(int); ok {
 		maxRetries = v
 	}
 
