@@ -27,9 +27,6 @@
 //      if err != nil {
 //        t.Fatal(err)
 //      }
-//      if err := ts.Start(); err != nil {
-//        t.Fatal(err)
-//      }
 //      defer ts.Stop()
 //
 //      url := ts.PGURL()
