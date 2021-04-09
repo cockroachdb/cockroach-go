@@ -66,7 +66,7 @@ var _ crdb.WriteSkewTest = sqlxConnSkewTest{}
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
 func (t sqlxConnSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
-	return ExecuteTx(ctx, t.db, nil /* txOptions */, func(tx *sqlx.Tx) error {
+	return ExecuteTx(ctx, t.db, func(tx *sqlx.Tx) error {
 		return fn(tx)
 	})
 }
