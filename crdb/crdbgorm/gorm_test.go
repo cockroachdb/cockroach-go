@@ -69,7 +69,7 @@ func (t gormWriteSkewTest) Init(context.Context) error {
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
 func (t gormWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
-	return ExecuteTx(ctx, t.db, nil /* opts */, func(tx *gorm.DB) error {
+	return ExecuteTx(ctx, t.db, func(tx *gorm.DB) error {
 		return fn(tx)
 	})
 }

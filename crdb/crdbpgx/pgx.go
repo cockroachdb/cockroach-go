@@ -16,6 +16,7 @@ package crdbpgx
 
 import (
 	"context"
+
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 
 	"github.com/jackc/pgx/v4"
@@ -29,13 +30,17 @@ import (
 //
 // conn can be a pgx.Conn or a pgxpool.Pool.
 func ExecuteTx(
-	ctx context.Context, conn Conn, txOptions pgx.TxOptions, fn func(pgx.Tx) error,
+	ctx context.Context, conn Conn, fn func(pgx.Tx) error, opts ...crdb.Option,
 ) error {
-	tx, err := conn.BeginTx(ctx, txOptions)
+	var options crdb.Options
+	for _, opt := range opts {
+		opt(&options)
+	}
+	tx, err := conn.BeginTx(ctx, options.PGXTxOptions())
 	if err != nil {
 		return err
 	}
-	return crdb.ExecuteInTx(ctx, pgxTxAdapter{tx}, func() error { return fn(tx) })
+	return crdb.ExecuteInTx(ctx, pgxTxAdapter{tx}, func() error { return fn(tx) }, opts...)
 }
 
 // Conn abstracts pgx transactions creators: pgx.Conn and pgxpool.Pool.

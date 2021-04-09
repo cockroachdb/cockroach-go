@@ -16,7 +16,6 @@ package crdbgorm
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"gorm.io/gorm"
@@ -28,13 +27,17 @@ import (
 //
 // See crdb.ExecuteTx() for more information.
 func ExecuteTx(
-	ctx context.Context, db *gorm.DB, opts *sql.TxOptions, fn func(tx *gorm.DB) error,
+	ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error, opts ...crdb.Option,
 ) error {
-	tx := db.WithContext(ctx).Begin(opts)
+	var options crdb.Options
+	for _, opt := range opts {
+		opt(&options)
+	}
+	tx := db.WithContext(ctx).Begin(options.TxOptions())
 	if db.Error != nil {
 		return db.Error
 	}
-	return crdb.ExecuteInTx(ctx, gormTxAdapter{tx}, func() error { return fn(tx) })
+	return crdb.ExecuteInTx(ctx, gormTxAdapter{tx}, func() error { return fn(tx) }, opts...)
 }
 
 // gormTxAdapter adapts a *gorm.DB to a crdb.Tx.

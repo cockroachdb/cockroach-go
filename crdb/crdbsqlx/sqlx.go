@@ -16,7 +16,6 @@ package crdbsqlx
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -29,12 +28,18 @@ import (
 // success, the transaction is committed.
 //
 // See crdb.ExecuteTx() for more information.
-func ExecuteTx(ctx context.Context, db *sqlx.DB, opts *sql.TxOptions, fn func(*sqlx.Tx) error) error {
-	tx, err := db.BeginTxx(ctx, opts)
+func ExecuteTx(
+	ctx context.Context, db *sqlx.DB, fn func(*sqlx.Tx) error, opts ...crdb.Option,
+) error {
+	var options crdb.Options
+	for _, opt := range opts {
+		opt(&options)
+	}
+	tx, err := db.BeginTxx(ctx, options.TxOptions())
 	if err != nil {
 		return err
 	}
-	return crdb.ExecuteInTx(ctx, sqlxTxAdapter{tx}, func() error { return fn(tx) })
+	return crdb.ExecuteInTx(ctx, sqlxTxAdapter{tx}, func() error { return fn(tx) }, opts...)
 }
 
 // sqlxTxAdapter adapts a *sqlx.tx to a crdb.Tx.

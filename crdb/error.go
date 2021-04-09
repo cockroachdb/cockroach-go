@@ -14,7 +14,10 @@
 
 package crdb
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // errorCause returns the original cause of the error, if possible. An
 // error has a proximate cause if it's type is compatible with Go's
@@ -68,6 +71,21 @@ func newMaxRetriesExceededError(err error, maxRetries int) *MaxRetriesExceededEr
 	return &MaxRetriesExceededError{
 		txError: txError{cause: err},
 		msg:     fmt.Sprintf(msgPattern, maxRetries, err),
+	}
+}
+
+// TimeoutError represents an error caused by the transaction not succeeding
+// within a specified duration.
+type TimeoutError struct {
+	txError
+	msg string
+}
+
+func newTimeoutError(err error, duration time.Duration) *TimeoutError {
+	const msgPattern = "txn timed out after %v. original error: %s."
+	return &TimeoutError{
+		txError: txError{cause: err},
+		msg:     fmt.Sprintf(msgPattern, duration, err),
 	}
 }
 
