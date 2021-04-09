@@ -24,19 +24,6 @@ func (o *Options) PGXTxOptions() pgx.TxOptions {
 
 type Option func(*Options)
 
-func newOptions(opts ...Option) Options {
-	o := Options{
-		timeout:    timeout,
-		maxRetries: maxRetries,
-	}
-
-	for _, fn := range opts {
-		fn(&o)
-	}
-
-	return o
-}
-
 func WithTxOptions(txOptions *sql.TxOptions) Option {
 	return func(o *Options) {
 		o.txOptions = txOptions
