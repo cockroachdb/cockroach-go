@@ -62,10 +62,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -438,7 +437,7 @@ func (ts *testServerImpl) Start() error {
 	ts.state = stateRunning
 	ts.mu.Unlock()
 
-	ts.cmd = exec.Command(ts.cmdArgs[0], ts.cmdArgs[1:]...)
+	ts.cmd = execCommand(ts.cmdArgs[0], ts.cmdArgs[1:]...)
 	ts.cmd.Env = []string{"COCKROACH_MAX_OFFSET=1ns"}
 
 	if len(ts.stdout) > 0 {
