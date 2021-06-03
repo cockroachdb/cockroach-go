@@ -29,13 +29,7 @@
 //      }
 //      defer ts.Stop()
 //
-//      url := ts.PGURL()
-//      if url == nil {
-//        t.Fatalf("url not found")
-//      }
-//      t.Logf("URL: %s", url.String())
-//
-//      db, err := sql.Open("postgres", url.String())
+//      db, err := sql.Open("postgres", ts.PGURL().String())
 //      if err != nil {
 //        t.Fatal(err)
 //      }
