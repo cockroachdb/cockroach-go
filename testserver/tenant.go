@@ -18,11 +18,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func (ts *testServerImpl) isTenant() bool {
@@ -144,16 +146,21 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			"start-proxy",
 			"--listen-addr",
 			ts.proxyAddr,
-			"--target-addr",
+			"--routing-rule",
 			sqlAddr,
 			"--listen-cert",
 			filepath.Join(certsDir, "node.crt"),
 			"--listen-key",
 			filepath.Join(certsDir, "node.key"),
+			"--listen-metrics=:0",
+			"--skip-verify",
 		}
 		cmd := exec.Command(cockroachBinary, args...)
 		if err := cmd.Start(); err != nil {
 			return "", err
+		}
+		if cmd.Process != nil {
+			log.Printf("process %d started: %s", cmd.Process.Pid, strings.Join(args, " "))
 		}
 		ts.proxyProcess = cmd.Process
 
@@ -172,6 +179,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		fmt.Sprintf("--tenant-id=%d", tenantID),
 		"--kv-addrs=" + pgURL.Host,
 		"--sql-addr=" + sqlAddr,
+		"--http-addr=:0",
 	}
 
 	tenant := &testServerImpl{
@@ -227,7 +235,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			tenantURL.Host = proxyAddr
 			// Massage the query string. The proxy expects the magic cluster name 'prancing-pony'. We remove the client
 			// certs since we won't be using them (and they don't work through the proxy anyway).
-			v.Add("options", "--cluster=prancing-pony")
+			v.Add("options", "--cluster=prancing-pony-2")
 		}
 
 		// Client certs should not be used; we're using password auth.
