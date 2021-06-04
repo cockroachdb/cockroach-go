@@ -439,7 +439,10 @@ func (ts *testServerImpl) Start() error {
 	ts.mu.Unlock()
 
 	ts.cmd = exec.Command(ts.cmdArgs[0], ts.cmdArgs[1:]...)
-	ts.cmd.Env = []string{"COCKROACH_MAX_OFFSET=1ns"}
+	ts.cmd.Env = []string{
+		"COCKROACH_MAX_OFFSET=1ns",
+		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
+	}
 
 	if len(ts.stdout) > 0 {
 		wr, err := newFileLogWriter(ts.stdout)
