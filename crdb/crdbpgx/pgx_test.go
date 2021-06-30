@@ -17,11 +17,12 @@ package crdbpgx
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"testing"
 )
 
 // TestExecuteTx verifies transaction retry using the classic
@@ -61,7 +62,7 @@ var _ crdb.WriteSkewTest = pgxWriteSkewTest{}
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
 func (t pgxWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
-	return ExecuteTx(ctx, t.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+	return ExecuteTx(ctx, t.pool, func(tx pgx.Tx) error {
 		return fn(tx)
 	})
 }

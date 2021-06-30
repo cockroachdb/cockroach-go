@@ -16,6 +16,13 @@ package crdb
 
 import (
 	"context"
+	"time"
+)
+
+// Sane defaults.
+const (
+	timeout    = 30 * time.Second
+	maxRetries = 50
 )
 
 // Tx abstracts the operations needed by ExecuteInTx so that different
@@ -37,7 +44,7 @@ type Tx interface {
 // retried.
 //
 // fn is subject to the same restrictions as the fn passed to ExecuteTx.
-func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
+func ExecuteInTx(ctx context.Context, tx Tx, fn func() error, opts ...Option) (err error) {
 	defer func() {
 		if err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
@@ -54,35 +61,64 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
-	// TODO(rafi): make the maxRetryCount configurable. Maybe pass it in the context?)
-	const maxRetries = 50
-	retryCount := 0
+	options := Options{
+		timeout:    timeout,
+		maxRetries: maxRetries,
+	}
+
+	for _, fn := range opts {
+		fn(&options)
+	}
+
+	retriesExceeded := func() bool { return false }
+
+	if options.maxRetries > 0 {
+		retryCount := 0
+		retriesExceeded = func() bool {
+			retryCount++
+			return retryCount > options.maxRetries
+		}
+	}
+
+	var timeout <-chan time.Time
+
+	if options.timeout > 0 {
+		timer := time.NewTimer(options.timeout)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+
 	for {
-		released := false
-		err = fn()
-		if err == nil {
-			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
-			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
-			released = true
-			if err = tx.Exec(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
-				return nil
+		select {
+		default:
+			released := false
+			err = fn()
+			if err == nil {
+				// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
+				// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
+				released = true
+				if err = tx.Exec(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
+					return nil
+				}
 			}
-		}
-		// We got an error; let's see if it's a retryable one and, if so, restart.
-		if !errIsRetryable(err) {
-			if released {
-				err = newAmbiguousCommitError(err)
+			// We got an error; let's see if it's a retryable one and, if so, restart.
+			if !errIsRetryable(err) {
+				if released {
+					err = newAmbiguousCommitError(err)
+				}
+				return err
 			}
-			return err
-		}
 
-		if retryErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
-			return newTxnRestartError(retryErr, err)
-		}
+			if retryErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
+				return newTxnRestartError(retryErr, err)
+			}
 
-		retryCount++
-		if retryCount > maxRetries {
-			return newMaxRetriesExceededError(err, maxRetries)
+			if retriesExceeded() {
+				return newMaxRetriesExceededError(err, maxRetries)
+			}
+
+		case <-timeout:
+			return newTimeoutError(err, options.timeout)
 		}
 	}
 }
