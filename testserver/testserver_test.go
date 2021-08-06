@@ -45,33 +45,45 @@ func TestRunServer(t *testing.T) {
 			},
 		},
 		{
+			name: "InsecureTenantStoreInMem",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.StoreInMemOpt())
+			},
+		},
+		{
+			name: "SecureTenantStoreInMem",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.StoreInMemOpt())
+			},
+		},
+		{
 			name: "InsecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
+				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false)
 			},
 		},
 		{
 			name: "SecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW)
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW, false)
 			},
 		},
 		{
 			name: "SecureTenantCustomPassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW)
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW, false)
 			},
 		},
 		{
 			name: "SecureTenantThroughProxy",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW)
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW, false)
 			},
 		},
 		{
 			name: "SecureTenantThroughProxyCustomPassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW)
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW, false)
 			},
 		},
 	} {
@@ -105,11 +117,14 @@ type tenantInterface interface {
 // newTenantDBForTest is a testing helper function that starts a TestServer
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
-func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string) (*sql.DB, func()) {
+func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string, memStore bool) (*sql.DB, func()) {
 	t.Helper()
 	var opts []testserver.TestServerOpt
 	if secure {
 		opts = append(opts, testserver.SecureOpt())
+	}
+	if memStore {
+		opts = append(opts, testserver.StoreInMemOpt())
 	}
 	if pw != "" {
 		opts = append(opts, testserver.RootPasswordOpt(pw))
@@ -138,7 +153,7 @@ func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string) (*sql.
 }
 
 func TestTenant(t *testing.T) {
-	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
+	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false)
 	defer stop()
 	if _, err := db.Exec("SELECT 1"); err != nil {
 		t.Fatal(err)

@@ -166,8 +166,9 @@ func NewDBForTestWithDatabase(
 type TestServerOpt func(args *testServerArgs)
 
 type testServerArgs struct {
-	secure bool
-	rootPW string // if nonempty, set as pw for root
+	secure     bool
+	rootPW     string // if nonempty, set as pw for root
+	storeInMem bool   // to save database in memory
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -175,6 +176,14 @@ type testServerArgs struct {
 func SecureOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.secure = true
+	}
+}
+
+// StoreInMemOpt is a TestServer option that can be passed to NewTestServer
+// to enable storing database in memory
+func StoreInMemOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.storeInMem = true
 	}
 }
 
@@ -292,6 +301,13 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		startCmd = "start"
 	}
 
+	var storeArg string
+	if serverArgs.storeInMem {
+		storeArg = "--store=type=mem"
+	} else {
+		storeArg = "--store" + baseDir
+	}
+
 	args := []string{
 		cockroachBinary,
 		startCmd,
@@ -300,7 +316,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		"--host=localhost",
 		"--port=0",
 		"--http-port=0",
-		"--store=" + baseDir,
+		storeArg,
 		"--listening-url-file=" + listeningURLFile,
 	}
 
