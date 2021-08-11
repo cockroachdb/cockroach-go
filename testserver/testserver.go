@@ -56,10 +56,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -76,6 +75,9 @@ const (
 	// to NewTenantServer for more information.
 	firstTenantID = 2
 )
+
+// By default, we allocate 20% of available memory to the test server.
+const defaultStoreMemSize = 0.2
 
 // TestServer is a helper to run a real cockroach node.
 type TestServer interface {
@@ -166,8 +168,10 @@ func NewDBForTestWithDatabase(
 type TestServerOpt func(args *testServerArgs)
 
 type testServerArgs struct {
-	secure bool
-	rootPW string // if nonempty, set as pw for root
+	secure       bool
+	rootPW       string  // if nonempty, set as pw for root
+	storeOnDisk  bool    // to save database in disk
+	storeMemSize float64 // the proportion of available memory allocated to test server
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -175,6 +179,27 @@ type testServerArgs struct {
 func SecureOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.secure = true
+	}
+}
+
+// StoreOnDiskOpt is a TestServer option that can be passed to NewTestServer
+// to enable storing database in memory.
+func StoreOnDiskOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.storeOnDisk = true
+	}
+}
+
+// SetStoreMemSizeOpt is a TestServer option that can be passed to NewTestServer
+// to set the proportion of available memory that is allocated
+// to the test server.
+func SetStoreMemSizeOpt(memSize float64) TestServerOpt {
+	return func(args *testServerArgs) {
+		if memSize > 0 {
+			args.storeMemSize = memSize
+		} else {
+			args.storeMemSize = defaultStoreMemSize
+		}
 	}
 }
 
@@ -200,6 +225,7 @@ const (
 // found in your path.
 func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	serverArgs := &testServerArgs{}
+	serverArgs.storeMemSize = defaultStoreMemSize
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
 	}
@@ -236,6 +262,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		}
 		return path, nil
 	}
+	// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
+	// Should be done once issue #109 is solved:
+	// https://github.com/cockroachdb/cockroach-go/issues/109
 	logDir, err := mkDir(logsDirName)
 	if err != nil {
 		return nil, err
@@ -292,6 +321,13 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		startCmd = "start"
 	}
 
+	var storeArg string
+	if serverArgs.storeOnDisk {
+		storeArg = "--store=path=" + baseDir
+	} else {
+		storeArg = fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
+	}
+
 	args := []string{
 		cockroachBinary,
 		startCmd,
@@ -300,7 +336,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		"--host=localhost",
 		"--port=0",
 		"--http-port=0",
-		"--store=" + baseDir,
+		storeArg,
 		"--listening-url-file=" + listeningURLFile,
 	}
 
