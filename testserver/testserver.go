@@ -56,10 +56,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -166,8 +165,9 @@ func NewDBForTestWithDatabase(
 type TestServerOpt func(args *testServerArgs)
 
 type testServerArgs struct {
-	secure bool
-	rootPW string // if nonempty, set as pw for root
+	secure      bool
+	rootPW      string // if nonempty, set as pw for root
+	nonStableDB bool
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -184,6 +184,14 @@ func SecureOpt() TestServerOpt {
 func RootPasswordOpt(pw string) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.rootPW = pw
+	}
+}
+
+// NonStableDbOpt is a TestServer option that can be passed to NewTestServer to
+// download the latest beta version of CRDB, but not necessary a stable one.
+func NonStableDbOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.nonStableDB = true
 	}
 }
 
@@ -215,7 +223,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	var err error
 	if cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
-	} else if cockroachBinary, err = downloadLatestBinary(); err != nil {
+	} else if cockroachBinary, err = downloadLatestBinary(serverArgs.nonStableDB); err != nil {
 		log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
 		cockroachBinary = "cockroach"
 	} else {

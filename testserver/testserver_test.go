@@ -39,6 +39,16 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.SecureOpt()) },
 		},
 		{
+			name:          "InsecureNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.NonStableDbOpt()) },
+		},
+		{
+			name: "SecureClientCertNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.NonStableDbOpt())
+			},
+		},
+		{
 			name: "SecurePassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.RootPasswordOpt(testPW))
