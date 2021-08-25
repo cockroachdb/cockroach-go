@@ -56,10 +56,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -423,11 +422,22 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 // Start runs the process, returning an error on any problems,
 // including being unable to start, but not unexpected failure.
 // It should only be called once in the lifetime of a TestServer object.
+// If the server is already running, this function is a no-op.
+// If the server stopped or failed, please don't use ts.Start()
+// to restart a testserver, but use NewTestServer().
 func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
 	if ts.state != stateNew {
 		ts.mu.Unlock()
-		return errors.New("Start() can only be called once")
+		switch ts.state {
+		case stateRunning:
+			return nil // No-op if server is already running.
+		case stateStopped, stateFailed:
+			// Start() can only be called once.
+			return errors.New(
+				"Start() cannot be used to restart a stopped or failed server. " +
+					"Please use NewTestServer()")
+		}
 	}
 	ts.state = stateRunning
 	ts.mu.Unlock()
