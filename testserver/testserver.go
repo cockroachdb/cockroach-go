@@ -56,10 +56,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	// Import postgres driver.
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 var customBinaryFlag = flag.String("cockroach-binary", "", "Use specified cockroach binary")
@@ -427,7 +426,7 @@ func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
 	if ts.state != stateNew {
 		ts.mu.Unlock()
-		return errors.New("Start() can only be called once")
+		return nil
 	}
 	ts.state = stateRunning
 	ts.mu.Unlock()
