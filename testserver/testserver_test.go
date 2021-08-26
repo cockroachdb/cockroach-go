@@ -24,6 +24,8 @@ import (
 
 const noPW = ""
 
+const defStoreMemSize = 0.2
+
 func TestRunServer(t *testing.T) {
 	const testPW = "foobar"
 	for _, tc := range []struct {
@@ -33,6 +35,12 @@ func TestRunServer(t *testing.T) {
 		{
 			name:          "Insecure",
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t) },
+		},
+		{
+			name: "InsecureWithCustomizedMemSize",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SetStoreMemSizeOpt(0.3))
+			},
 		},
 		{
 			name:          "SecureClientCert",
@@ -45,33 +53,45 @@ func TestRunServer(t *testing.T) {
 			},
 		},
 		{
+			name: "InsecureTenantStoreOnDisk",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.StoreOnDiskOpt())
+			},
+		},
+		{
+			name: "SecureTenantStoreOnDisk",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.StoreOnDiskOpt())
+			},
+		},
+		{
 			name: "InsecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
+				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 			},
 		},
 		{
 			name: "SecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW)
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 			},
 		},
 		{
 			name: "SecureTenantCustomPassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW)
+				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 			},
 		},
 		{
 			name: "SecureTenantThroughProxy",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW)
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 			},
 		},
 		{
 			name: "SecureTenantThroughProxyCustomPassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW)
+				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 			},
 		},
 	} {
@@ -105,14 +125,24 @@ type tenantInterface interface {
 // newTenantDBForTest is a testing helper function that starts a TestServer
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
-func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string) (*sql.DB, func()) {
+func newTenantDBForTest(
+	t *testing.T, secure bool, proxy bool, pw string, diskStore bool, storeMemSize float64,
+) (*sql.DB, func()) {
 	t.Helper()
 	var opts []testserver.TestServerOpt
 	if secure {
 		opts = append(opts, testserver.SecureOpt())
 	}
+	if diskStore {
+		opts = append(opts, testserver.StoreOnDiskOpt())
+	}
 	if pw != "" {
 		opts = append(opts, testserver.RootPasswordOpt(pw))
+	}
+	if storeMemSize >= 0 {
+		opts = append(opts, testserver.SetStoreMemSizeOpt(storeMemSize))
+	} else {
+		t.Fatal("Percentage memory size for data storage cannot be nagative")
 	}
 	ts, err := testserver.NewTestServer(opts...)
 	if err != nil {
@@ -138,7 +168,7 @@ func newTenantDBForTest(t *testing.T, secure bool, proxy bool, pw string) (*sql.
 }
 
 func TestTenant(t *testing.T) {
-	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW)
+	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
 	defer stop()
 	if _, err := db.Exec("SELECT 1"); err != nil {
 		t.Fatal(err)
