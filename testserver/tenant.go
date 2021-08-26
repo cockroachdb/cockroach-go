@@ -209,7 +209,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		return nil, err
 	}
 
-	tenantDB, err := sql.Open("postgres", tenantURL.String())
+	tenantDB, _ := sql.Open("postgres", tenantURL.String())
 	defer tenantDB.Close()
 
 	rootPassword := ""
