@@ -210,6 +210,9 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 
 	tenantDB, err := sql.Open("postgres", tenantURL.String())
+	if err != nil {
+		return nil, err
+	}
 	defer tenantDB.Close()
 
 	rootPassword := ""
