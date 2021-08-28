@@ -28,21 +28,38 @@ import (
 	"regexp"
 	"runtime"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 const (
 	latestSuffix     = "LATEST"
 	finishedFileMode = 0555
+	writingFileMode  = 0600 // Allow reads so that another process can check if there's a flock.
 )
 
-func downloadFile(response *http.Response, filePath string) error {
-	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0200)
+func downloadFile(response *http.Response, filePath string, tc *TestConfig) error {
+	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, writingFileMode)
 	if err != nil {
 		return fmt.Errorf("error creating %s: %s", filePath, err)
 	}
 	defer func() { _ = output.Close() }()
 
 	log.Printf("saving %s to %s, this may take some time", response.Request.URL, filePath)
+
+	// Assign a flock to the local file.
+	// If the downloading process is killed half way,
+	// the lock will be automatically dropped.
+	localFileLock := flock.New(filePath)
+	if _, err := localFileLock.TryLock(); err != nil {
+		return err
+	}
+
+	if tc.IsTest && tc.StopDownloadInMiddle {
+		log.Printf("download process killed")
+		output.Close()
+		return fmt.Errorf(stoppedInMiddle)
+	}
 
 	if _, err := io.Copy(output, response.Body); err != nil {
 		return fmt.Errorf("problem saving %s to %s: %s", response.Request.URL, filePath, err)
@@ -53,6 +70,10 @@ func downloadFile(response *http.Response, filePath string) error {
 		return err
 	}
 
+	if err := localFileLock.Close(); err != nil {
+		return err
+	}
+
 	// We explicitly close here to ensure the error is checked; the deferred
 	// close above will likely error in this case, but that's harmless.
 	return output.Close()
@@ -60,7 +81,7 @@ func downloadFile(response *http.Response, filePath string) error {
 
 var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
 
-func downloadLatestBinary() (string, error) {
+func GetDownloadResponse() (*http.Response, error) {
 	goos := runtime.GOOS
 	if goos == "linux" {
 		goos += func() string {
@@ -88,14 +109,17 @@ func downloadLatestBinary() (string, error) {
 	log.Printf("GET %s", url)
 	response, err := http.Get(url.String())
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != 200 {
-		return "", fmt.Errorf("error downloading %s: %d (%s)", url, response.StatusCode, response.Status)
+		return nil, fmt.Errorf("error downloading %s: %d (%s)", url,
+			response.StatusCode, response.Status)
 	}
+	return response, nil
+}
 
+func GetDownloadFilename(response *http.Response) (string, error) {
 	const contentDisposition = "Content-Disposition"
 	_, disposition, err := mime.ParseMediaType(response.Header.Get(contentDisposition))
 	if err != nil {
@@ -105,6 +129,20 @@ func downloadLatestBinary() (string, error) {
 	filename, ok := disposition["filename"]
 	if !ok {
 		return "", fmt.Errorf("content disposition header %s did not contain filename", disposition)
+	}
+	return filename, nil
+}
+
+func downloadLatestBinary(tc *TestConfig) (string, error) {
+	response, err := GetDownloadResponse()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	filename, err := GetDownloadFilename(response)
+	if err != nil {
+		return "", err
 	}
 	localFile := filepath.Join(os.TempDir(), filename)
 	for {
@@ -120,13 +158,35 @@ func downloadLatestBinary() (string, error) {
 		if info.Mode().Perm() == finishedFileMode {
 			return localFile, nil
 		}
+
+		localFileLock := flock.New(localFile)
+		// If there's a process downloading the binary, local file cannot be flocked.
+		canBeLocked, err := localFileLock.TryLock()
+		if err == nil {
+			if canBeLocked {
+				// If local file can be locked, it means the previous download was
+				// killed half way. Delete local file and re-download.
+				log.Printf("Find half-way failed download, delete and re-download")
+				if err := os.Remove(localFile); err != nil {
+					log.Printf("failed to remove half-way failed download %s: %s", localFile, err)
+					return "", err
+				}
+				break
+			}
+		} else {
+			return "", err
+		}
+
 		log.Printf("waiting for download of %s", localFile)
 		time.Sleep(time.Millisecond * 10)
 	}
 
-	if err := downloadFile(response, localFile); err != nil {
-		if err := os.Remove(localFile); err != nil {
-			log.Printf("failed to remove %s: %s", localFile, err)
+	err = downloadFile(response, localFile, tc)
+	if err != nil {
+		if err.Error() != stoppedInMiddle {
+			if err := os.Remove(localFile); err != nil {
+				log.Printf("failed to remove %s: %s", localFile, err)
+			}
 		}
 		return "", err
 	}

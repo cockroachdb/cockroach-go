@@ -146,7 +146,11 @@ func NewDBForTestWithDatabase(
 	t.Helper()
 	ts, err := NewTestServer(opts...)
 	if err != nil {
-		t.Fatal(err)
+		if err.Error() != stoppedInMiddle {
+			t.Fatal(err)
+		} else {
+			return nil, nil
+		}
 	}
 	url := ts.PGURL()
 	if len(database) > 0 {
@@ -167,11 +171,17 @@ func NewDBForTestWithDatabase(
 // TestServerOpt is passed to NewTestServer.
 type TestServerOpt func(args *testServerArgs)
 
+type TestConfig struct {
+	IsTest               bool
+	StopDownloadInMiddle bool
+}
+
 type testServerArgs struct {
 	secure       bool
 	rootPW       string  // if nonempty, set as pw for root
 	storeOnDisk  bool    // to save database in disk
 	storeMemSize float64 // the proportion of available memory allocated to test server
+	testConfig   TestConfig
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -212,6 +222,18 @@ func RootPasswordOpt(pw string) TestServerOpt {
 	}
 }
 
+// StopDownloadInMiddleOpt is a TestServer option used only in testing.
+// It is used to test the flock over downloaded CRDB binary.
+// It should not be used in production.
+func StopDownloadInMiddleOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		tc := TestConfig{IsTest: true, StopDownloadInMiddle: true}
+		args.testConfig = tc
+	}
+}
+
+const stoppedInMiddle = "download stopped in middle"
+
 const (
 	logsDirName  = "logs"
 	certsDirName = "certs"
@@ -241,11 +263,18 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	var err error
 	if cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
-	} else if cockroachBinary, err = downloadLatestBinary(); err != nil {
-		log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
-		cockroachBinary = "cockroach"
 	} else {
-		log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
+		cockroachBinary, err = downloadLatestBinary(&serverArgs.testConfig)
+		if err != nil {
+			if err.Error() == stoppedInMiddle {
+				return nil, fmt.Errorf(stoppedInMiddle)
+			} else {
+				log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
+				cockroachBinary = "cockroach"
+			}
+		} else {
+			log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
+		}
 	}
 
 	// Force "/tmp/" so avoid OSX's really long temp directory names
