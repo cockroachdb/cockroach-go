@@ -42,10 +42,10 @@ func downloadFile(response *http.Response, filePath string) error {
 	}
 	defer func() { _ = output.Close() }()
 
-	log.Printf("saving %s to %s, this may take some time", response.Request.URL, filePath)
+	log.Printf("testserver: saving %s to %s, this may take some time", response.Request.URL, filePath)
 
 	if _, err := io.Copy(output, response.Body); err != nil {
-		return fmt.Errorf("problem saving %s to %s: %s", response.Request.URL, filePath, err)
+		return fmt.Errorf("testserver: problem saving %s to %s: %s", response.Request.URL, filePath, err)
 	}
 
 	// Download was successful, add the rw bits.
@@ -93,18 +93,18 @@ func downloadLatestBinary() (string, error) {
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != 200 {
-		return "", fmt.Errorf("error downloading %s: %d (%s)", url, response.StatusCode, response.Status)
+		return "", fmt.Errorf("testserver: error downloading %s: %d (%s)", url, response.StatusCode, response.Status)
 	}
 
 	const contentDisposition = "Content-Disposition"
 	_, disposition, err := mime.ParseMediaType(response.Header.Get(contentDisposition))
 	if err != nil {
-		return "", fmt.Errorf("error parsing %s headers %s: %s", contentDisposition, response.Header, err)
+		return "", fmt.Errorf("testserver: error parsing %s headers %s: %s", contentDisposition, response.Header, err)
 	}
 
 	filename, ok := disposition["filename"]
 	if !ok {
-		return "", fmt.Errorf("content disposition header %s did not contain filename", disposition)
+		return "", fmt.Errorf("testserver: content disposition header %s did not contain filename", disposition)
 	}
 	localFile := filepath.Join(os.TempDir(), filename)
 	for {
@@ -120,13 +120,13 @@ func downloadLatestBinary() (string, error) {
 		if info.Mode().Perm() == finishedFileMode {
 			return localFile, nil
 		}
-		log.Printf("waiting for download of %s", localFile)
+		log.Printf("testserver: waiting for download of %s", localFile)
 		time.Sleep(time.Millisecond * 10)
 	}
 
 	if err := downloadFile(response, localFile); err != nil {
 		if err := os.Remove(localFile); err != nil {
-			log.Printf("failed to remove %s: %s", localFile, err)
+			log.Printf("testserver: failed to remove %s: %s", localFile, err)
 		}
 		return "", err
 	}

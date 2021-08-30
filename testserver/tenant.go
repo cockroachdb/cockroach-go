@@ -50,7 +50,7 @@ func (ts *testServerImpl) isTenant() bool {
 // NewTestServer to this interface. Refer to the tests for an example.
 func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if proxy && !ts.serverArgs.secure {
-		return nil, errors.New("proxy can not be used with insecure mode")
+		return nil, errors.New("testserver: proxy can not be used with insecure mode")
 	}
 	cockroachBinary := ts.cmdArgs[0]
 	tenantID, err := func() (int, error) {
@@ -60,7 +60,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			return 0, errors.New("TestServer must be running before NewTenantServer may be called")
 		}
 		if ts.isTenant() {
-			return 0, errors.New("cannot call NewTenantServer on a tenant")
+			return 0, errors.New("testserver: cannot call NewTenantServer on a tenant")
 		}
 		tenantID := ts.curTenantID
 		ts.curTenantID++
@@ -93,7 +93,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 	pgURL := ts.PGURL()
 	if pgURL == nil {
-		return nil, errors.New("url not found")
+		return nil, errors.New("testserver: postgres url not found")
 	}
 	db, err := sql.Open("postgres", pgURL.String())
 	if err != nil {

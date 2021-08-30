@@ -142,7 +142,7 @@ func newTenantDBForTest(
 	if storeMemSize >= 0 {
 		opts = append(opts, testserver.SetStoreMemSizeOpt(storeMemSize))
 	} else {
-		t.Fatal("Percentage memory size for data storage cannot be nagative")
+		t.Fatal("testserver: Percentage memory size for data storage cannot be nagative")
 	}
 	ts, err := testserver.NewTestServer(opts...)
 	if err != nil {
@@ -154,7 +154,7 @@ func newTenantDBForTest(
 	}
 	url := tenant.PGURL()
 	if url == nil {
-		t.Fatal("postgres url not found")
+		t.Fatal("testserver: postgres url not found")
 	}
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
@@ -175,6 +175,6 @@ func TestTenant(t *testing.T) {
 	}
 
 	if _, err := db.Exec("SELECT crdb_internal.create_tenant(123)"); err == nil {
-		t.Fatal("expected an error when creating a tenant since secondary tenants should not be able to do so")
+		t.Fatal("testserver: expected an error when creating a tenant since secondary tenants should not be able to do so")
 	}
 }

@@ -252,13 +252,13 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	// which get us over the socket filename length limit.
 	baseDir, err := ioutil.TempDir("/tmp", "cockroach-testserver")
 	if err != nil {
-		return nil, fmt.Errorf("could not create temp directory: %s", err)
+		return nil, fmt.Errorf("testserver: could not create temp directory: %s", err)
 	}
 
 	mkDir := func(name string) (string, error) {
 		path := filepath.Join(baseDir, name)
 		if err := os.MkdirAll(path, 0755); err != nil {
-			return "", fmt.Errorf("could not create %s directory: %s: %s", name, path, err)
+			return "", fmt.Errorf("testserver: could not create %s directory: %s: %s", name, path, err)
 		}
 		return path, nil
 	}
@@ -357,7 +357,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	if ts.PGURL() == nil {
-		return nil, errors.New("testserver: url not found")
+		return nil, errors.New("testserver: postgres url not found")
 	}
 
 	if err := ts.WaitForInit(); err != nil {
@@ -400,11 +400,12 @@ func (ts *testServerImpl) WaitForInit() error {
 		return err
 	}
 	defer db.Close()
+	log.Printf("Try connecting to postgres in cockroach-go testserver")
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("WaitForInit: Trying again after error: %v", err)
+		log.Printf("WaitForInit in testserver: Trying again after error: %v", err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return err
@@ -417,7 +418,8 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 		state := ts.state
 		ts.mu.Unlock()
 		if state != stateRunning {
-			return fmt.Errorf("server stopped or crashed before listening URL file was available")
+			return fmt.Errorf("testserver: server stopped or crashed before listening" +
+				" URL file was available")
 		}
 
 		var err error
@@ -425,14 +427,15 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 		if err == nil {
 			break
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error while reading listening URL file: %v", err)
+			return fmt.Errorf("testserver: unexpected error while reading listening URL"+
+				" file: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
 	if err != nil {
-		return fmt.Errorf("failed to parse SQL URL: %v", err)
+		return fmt.Errorf("testserver: failed to parse SQL URL: %v", err)
 	}
 	ts.pgURL.orig = *u
 	if pw := ts.serverArgs.rootPW; pw != "" {
@@ -472,8 +475,8 @@ func (ts *testServerImpl) Start() error {
 		case stateStopped, stateFailed:
 			// Start() can only be called once.
 			return errors.New(
-				"Start() cannot be used to restart a stopped or failed server. " +
-					"Please use NewTestServer()")
+				"testserver: Start() cannot be used to restart a stopped or failed" +
+					" server. Please use NewTestServer()")
 		}
 	}
 	ts.state = stateRunning
@@ -488,7 +491,7 @@ func (ts *testServerImpl) Start() error {
 	if len(ts.stdout) > 0 {
 		wr, err := newFileLogWriter(ts.stdout)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %s", ts.stdout, err)
+			return fmt.Errorf("testserver: unable to open file %s: %s", ts.stdout, err)
 		}
 		ts.stdoutBuf = wr
 	}
@@ -497,7 +500,7 @@ func (ts *testServerImpl) Start() error {
 	if len(ts.stderr) > 0 {
 		wr, err := newFileLogWriter(ts.stderr)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %s", ts.stderr, err)
+			return fmt.Errorf("testserver: unable to open file %s: %s", ts.stderr, err)
 		}
 		ts.stderrBuf = wr
 	}
@@ -509,38 +512,38 @@ func (ts *testServerImpl) Start() error {
 
 	err := ts.cmd.Start()
 	if ts.cmd.Process != nil {
-		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
+		log.Printf("testserver: process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
 	}
 	if err != nil {
 		log.Print(err.Error())
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("testserver: failed to close stdout: %s", err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("testserver: failed to close stderr: %s", err)
 		}
 
 		ts.mu.Lock()
 		ts.state = stateFailed
 		ts.mu.Unlock()
 
-		return fmt.Errorf("failure starting process: %s", err)
+		return fmt.Errorf("testserver: failure starting process: %s", err)
 	}
 
 	go func() {
 		err := ts.cmd.Wait()
 
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("testserver: failed to close stdout: %s", err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("testserver: failed to close stderr: %s", err)
 		}
 
 		ps := ts.cmd.ProcessState
 		sy := ps.Sys().(syscall.WaitStatus)
 
-		log.Printf("Process %d exited with status %d: %v", ps.Pid(), sy.ExitStatus(), err)
+		log.Printf("testserver: Process %d exited with status %d: %v", ps.Pid(), sy.ExitStatus(), err)
 		log.Print(ps.String())
 
 		ts.mu.Lock()
@@ -573,10 +576,10 @@ func (ts *testServerImpl) Stop() {
 	defer ts.mu.RUnlock()
 
 	if ts.state == stateNew {
-		log.Fatal("Stop() called, but Start() was never called")
+		log.Fatal("testserver: Stop() called, but Start() was never called")
 	}
 	if ts.state == stateFailed {
-		log.Fatalf("Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
+		log.Fatalf("testserver: Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
 			ts.Stdout(), ts.Stderr())
 		return
 	}

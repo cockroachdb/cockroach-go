@@ -92,7 +92,7 @@ var numericRE = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 // dots.
 func Parse(str string) (*Version, error) {
 	if !versionRE.MatchString(str) {
-		return nil, errors.Errorf("invalid version string '%s'", str)
+		return nil, errors.Errorf("testserver: invalid version string '%s'", str)
 	}
 
 	var v Version
@@ -100,7 +100,7 @@ func Parse(str string) (*Version, error) {
 	// Read the major.minor.patch part.
 	_, err := fmt.Fscanf(r, "v%d.%d.%d", &v.major, &v.minor, &v.patch)
 	if err != nil {
-		panic(fmt.Sprintf("invalid version '%s' passed the regex: %s", str, err))
+		panic(fmt.Sprintf("testserver: invalid version '%s' passed the regex: %s", str, err))
 	}
 	remaining := str[len(str)-r.Len():]
 	// Read the pre-release, if present.
@@ -115,7 +115,7 @@ func Parse(str string) (*Version, error) {
 	// Read the metadata, if present.
 	if len(remaining) > 0 {
 		if remaining[0] != '+' {
-			panic(fmt.Sprintf("invalid version '%s' passed the regex", str))
+			panic(fmt.Sprintf("testserver: invalid version '%s' passed the regex", str))
 		}
 		v.metadata = remaining[1:]
 	}
@@ -196,7 +196,7 @@ func (v *Version) Compare(w *Version) int {
 					panic(err)
 				}
 				if vVal == wVal {
-					panic("different strings yield the same numbers")
+					panic("testserver: different strings yield the same numbers")
 				}
 				if vVal < wVal {
 					return -1
