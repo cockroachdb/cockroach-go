@@ -79,6 +79,9 @@ const (
 // By default, we allocate 20% of available memory to the test server.
 const defaultStoreMemSize = 0.2
 
+const testserverMessagePrefix = "cockroach-go testserver"
+const tenantserverMessagePrefix = "cockroach-go tenantserver"
+
 // TestServer is a helper to run a real cockroach node.
 type TestServer interface {
 	// Start starts the server.
@@ -155,7 +158,7 @@ func NewDBForTestWithDatabase(
 
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s: %v", testserverMessagePrefix, err)
 	}
 
 	return db, func() {
@@ -242,7 +245,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	if cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
 	} else if cockroachBinary, err = downloadLatestBinary(); err != nil {
-		log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
+		log.Printf("%s: Failed to fetch latest binary: %v attempting to use cockroach binary from your PATH", testserverMessagePrefix, err)
 		cockroachBinary = "cockroach"
 	} else {
 		log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
@@ -252,13 +255,15 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	// which get us over the socket filename length limit.
 	baseDir, err := ioutil.TempDir("/tmp", "cockroach-testserver")
 	if err != nil {
-		return nil, fmt.Errorf("could not create temp directory: %s", err)
+		errMessage := fmt.Errorf("could not create temp directory: %w", err)
+		return nil, WrapError(errMessage, testserverMessagePrefix)
 	}
 
 	mkDir := func(name string) (string, error) {
 		path := filepath.Join(baseDir, name)
 		if err := os.MkdirAll(path, 0755); err != nil {
-			return "", fmt.Errorf("could not create %s directory: %s: %s", name, path, err)
+			errMessage := fmt.Errorf("could not create %s directory: %s: %w", name, path, err)
+			return "", WrapError(errMessage, testserverMessagePrefix)
 		}
 		return path, nil
 	}
@@ -292,7 +297,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			{"cert", "create-client", "root"},
 		} {
 			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
-				return nil, err
+				return nil, WrapError(err, testserverMessagePrefix)
 			}
 		}
 		secureOpt = "--certs-dir=" + certsDir
@@ -304,17 +309,17 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	versionCmd := exec.Command(cockroachBinary, "version")
 	versionOutput, err := versionCmd.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, testserverMessagePrefix)
 	}
 	reader := bufio.NewReader(bytes.NewReader(versionOutput))
 	versionLine, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, testserverMessagePrefix)
 	}
 	versionLineTokens := strings.Fields(versionLine)
 	v, err := version.Parse(versionLineTokens[2])
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, testserverMessagePrefix)
 	}
 	startCmd := "start-single-node"
 	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
@@ -353,15 +358,15 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	ts.pgURL.set = make(chan struct{})
 
 	if err := ts.Start(); err != nil {
-		return nil, err
+		return nil, WrapError(err, testserverMessagePrefix)
 	}
 
 	if ts.PGURL() == nil {
-		return nil, errors.New("testserver: url not found")
+		return nil, WrapError(errors.New("testserver: url not found"), testserverMessagePrefix)
 	}
 
 	if err := ts.WaitForInit(); err != nil {
-		return nil, err
+		return nil, WrapError(err, testserverMessagePrefix)
 	}
 
 	return ts, nil
@@ -404,7 +409,7 @@ func (ts *testServerImpl) WaitForInit() error {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("WaitForInit: Trying again after error: %v", err)
+		log.Printf("%s: WaitForInit: Trying again after error: %v", testserverMessagePrefix, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return err
@@ -514,10 +519,10 @@ func (ts *testServerImpl) Start() error {
 	if err != nil {
 		log.Print(err.Error())
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
 		}
 
 		ts.mu.Lock()
@@ -531,16 +536,20 @@ func (ts *testServerImpl) Start() error {
 		err := ts.cmd.Wait()
 
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
 		}
 
 		ps := ts.cmd.ProcessState
 		sy := ps.Sys().(syscall.WaitStatus)
 
-		log.Printf("Process %d exited with status %d: %v", ps.Pid(), sy.ExitStatus(), err)
+		message := fmt.Sprintf("Process %d exited with status %d: %v",
+			ps.Pid(),
+			sy.ExitStatus(),
+			err)
+		log.Printf("%s: %s", testserverMessagePrefix, message)
 		log.Print(ps.String())
 
 		ts.mu.Lock()
@@ -555,7 +564,7 @@ func (ts *testServerImpl) Start() error {
 	if ts.pgURL.u == nil {
 		go func() {
 			if err := ts.pollListeningURLFile(); err != nil {
-				log.Printf("%v", err)
+				log.Printf("%s: %v", testserverMessagePrefix, err)
 				close(ts.pgURL.set)
 				ts.Stop()
 			}
@@ -573,11 +582,13 @@ func (ts *testServerImpl) Stop() {
 	defer ts.mu.RUnlock()
 
 	if ts.state == stateNew {
-		log.Fatal("Stop() called, but Start() was never called")
+		log.Fatalf("%s: Stop() called, but Start() was never called", testserverMessagePrefix)
 	}
 	if ts.state == stateFailed {
-		log.Fatalf("Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
-			ts.Stdout(), ts.Stderr())
+		log.Fatalf("%s: Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
+			testserverMessagePrefix,
+			ts.Stdout(),
+			ts.Stderr())
 		return
 	}
 
@@ -663,4 +674,10 @@ func defaultEnv() map[string]string {
 		vars["PATH"] = os.Getenv("PATH")
 	}
 	return vars
+}
+
+// WrapError returns a wrapped error with a context string at the front of the error message.
+// See "Wrapping errors with %w" in https://go.dev/blog/go1.13-errors.
+func WrapError(e error, contextMessage string) error {
+	return fmt.Errorf("%s: %w", contextMessage, e)
 }

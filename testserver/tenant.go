@@ -50,7 +50,8 @@ func (ts *testServerImpl) isTenant() bool {
 // NewTestServer to this interface. Refer to the tests for an example.
 func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if proxy && !ts.serverArgs.secure {
-		return nil, errors.New("proxy can not be used with insecure mode")
+		return nil, WrapError(errors.New("proxy can not be used with insecure mode"),
+			tenantserverMessagePrefix)
 	}
 	cockroachBinary := ts.cmdArgs[0]
 	tenantID, err := func() (int, error) {
@@ -67,7 +68,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		return tenantID, nil
 	}()
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 
 	secureFlag := "--insecure"
@@ -83,25 +84,25 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			{"mt", "cert", "create-tenant-client", fmt.Sprint(tenantID)},
 		} {
 			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
-				return nil, err
+				return nil, WrapError(err, tenantserverMessagePrefix)
 			}
 		}
 	}
 	// Create a new tenant.
 	if err := ts.WaitForInit(); err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 	pgURL := ts.PGURL()
 	if pgURL == nil {
-		return nil, errors.New("url not found")
+		return nil, WrapError(errors.New("url not found"), tenantserverMessagePrefix)
 	}
 	db, err := sql.Open("postgres", pgURL.String())
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 	defer db.Close()
 	if _, err := db.Exec(fmt.Sprintf("SELECT crdb_internal.create_tenant(%d)", tenantID)); err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 
 	// TODO(asubiotto): We should pass ":0" as the sql addr to push port
@@ -112,13 +113,13 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	addr := func() (string, error) {
 		l, err := net.Listen("tcp", ":0")
 		if err != nil {
-			return "", err
+			return "", WrapError(err, tenantserverMessagePrefix)
 		}
 		// Use localhost because of certificate validation issues otherwise
 		// (something about IP SANs).
 		addr := "localhost:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 		if err := l.Close(); err != nil {
-			return "", err
+			return "", WrapError(err, tenantserverMessagePrefix)
 		}
 		return addr, nil
 	}
@@ -157,17 +158,18 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		}
 		cmd := exec.Command(cockroachBinary, args...)
 		if err := cmd.Start(); err != nil {
-			return "", err
+			return "", WrapError(err, tenantserverMessagePrefix)
 		}
 		if cmd.Process != nil {
-			log.Printf("process %d started: %s", cmd.Process.Pid, strings.Join(args, " "))
+			log.Printf("%s: process %d started: %s", tenantserverMessagePrefix, cmd.Process.Pid,
+				strings.Join(args, " "))
 		}
 		ts.proxyProcess = cmd.Process
 
 		return ts.proxyAddr, nil
 	}()
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 
 	args := []string{
@@ -203,15 +205,15 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 
 	tenant.setPGURL(&tenantURL)
 	if err := tenant.Start(); err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 	if err := tenant.WaitForInit(); err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 
 	tenantDB, err := sql.Open("postgres", tenantURL.String())
 	if err != nil {
-		return nil, err
+		return nil, WrapError(err, tenantserverMessagePrefix)
 	}
 	defer tenantDB.Close()
 
@@ -227,7 +229,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if rootPassword != "" {
 		// Allow root to login via password.
 		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", rootPassword); err != nil {
-			return nil, err
+			return nil, WrapError(err, tenantserverMessagePrefix)
 		}
 
 		// NB: need the lock since *tenantURL is owned by `tenant`.
