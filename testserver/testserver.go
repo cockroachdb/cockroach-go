@@ -79,6 +79,9 @@ const (
 // By default, we allocate 20% of available memory to the test server.
 const defaultStoreMemSize = 0.2
 
+const testserverMessagePrefix = "cockroach-go testserver"
+const tenantserverMessagePrefix = "cockroach-go tenantserver"
+
 // TestServer is a helper to run a real cockroach node.
 type TestServer interface {
 	// Start starts the server.
@@ -164,7 +167,7 @@ func NewDBForTestWithDatabase(
 
 	db, err := sql.Open("postgres", url.String())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s: %v", testserverMessagePrefix, err)
 	}
 
 	return db, func() {
@@ -276,7 +279,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				// return error.
 				return nil, err
 			}
-			log.Printf("Failed to fetch latest binary: %s, attempting to use cockroach binary from your PATH", err)
+			log.Printf("%s: Failed to fetch latest binary: %v attempting to use cockroach binary from your PATH", testserverMessagePrefix, err)
 			cockroachBinary = "cockroach"
 		} else {
 			log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
@@ -287,13 +290,15 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	// which get us over the socket filename length limit.
 	baseDir, err := ioutil.TempDir("/tmp", "cockroach-testserver")
 	if err != nil {
-		return nil, fmt.Errorf("could not create temp directory: %s", err)
+		return nil, fmt.Errorf("%s: could not create temp directory: %w",
+			testserverMessagePrefix, err)
 	}
 
 	mkDir := func(name string) (string, error) {
 		path := filepath.Join(baseDir, name)
 		if err := os.MkdirAll(path, 0755); err != nil {
-			return "", fmt.Errorf("could not create %s directory: %s: %s", name, path, err)
+			return "", fmt.Errorf("%s: could not create %s directory: %s: %w",
+				testserverMessagePrefix, name, path, err)
 		}
 		return path, nil
 	}
@@ -302,11 +307,11 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	// https://github.com/cockroachdb/cockroach-go/issues/109
 	logDir, err := mkDir(logsDirName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 	certsDir, err := mkDir(certsDirName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 
 	listeningURLFile := filepath.Join(baseDir, "listen-url")
@@ -327,7 +332,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			{"cert", "create-client", "root"},
 		} {
 			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 			}
 		}
 		secureOpt = "--certs-dir=" + certsDir
@@ -339,17 +344,17 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	versionCmd := exec.Command(cockroachBinary, "version")
 	versionOutput, err := versionCmd.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 	reader := bufio.NewReader(bytes.NewReader(versionOutput))
 	versionLine, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 	versionLineTokens := strings.Fields(versionLine)
 	v, err := version.Parse(versionLineTokens[2])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 	startCmd := "start-single-node"
 	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
@@ -388,15 +393,15 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	ts.pgURL.set = make(chan struct{})
 
 	if err := ts.Start(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 
 	if ts.PGURL() == nil {
-		return nil, errors.New("testserver: url not found")
+		return nil, fmt.Errorf("%s: url not found", testserverMessagePrefix)
 	}
 
 	if err := ts.WaitForInit(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 
 	return ts, nil
@@ -439,7 +444,7 @@ func (ts *testServerImpl) WaitForInit() error {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("WaitForInit: Trying again after error: %v", err)
+		log.Printf("%s: WaitForInit: Trying again after error: %v", testserverMessagePrefix, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return err
@@ -460,14 +465,14 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 		if err == nil {
 			break
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error while reading listening URL file: %v", err)
+			return fmt.Errorf("unexpected error while reading listening URL file: %w", err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
 	if err != nil {
-		return fmt.Errorf("failed to parse SQL URL: %v", err)
+		return fmt.Errorf("failed to parse SQL URL: %w", err)
 	}
 	ts.pgURL.orig = *u
 	if pw := ts.serverArgs.rootPW; pw != "" {
@@ -507,7 +512,7 @@ func (ts *testServerImpl) Start() error {
 		case stateStopped, stateFailed:
 			// Start() can only be called once.
 			return errors.New(
-				"Start() cannot be used to restart a stopped or failed server. " +
+				"`Start()` cannot be used to restart a stopped or failed server. " +
 					"Please use NewTestServer()")
 		}
 	}
@@ -523,7 +528,7 @@ func (ts *testServerImpl) Start() error {
 	if len(ts.stdout) > 0 {
 		wr, err := newFileLogWriter(ts.stdout)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %s", ts.stdout, err)
+			return fmt.Errorf("unable to open file %s: %w", ts.stdout, err)
 		}
 		ts.stdoutBuf = wr
 	}
@@ -532,7 +537,7 @@ func (ts *testServerImpl) Start() error {
 	if len(ts.stderr) > 0 {
 		wr, err := newFileLogWriter(ts.stderr)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %s", ts.stderr, err)
+			return fmt.Errorf("unable to open file %s: %w", ts.stderr, err)
 		}
 		ts.stderrBuf = wr
 	}
@@ -549,33 +554,37 @@ func (ts *testServerImpl) Start() error {
 	if err != nil {
 		log.Print(err.Error())
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
 		}
 
 		ts.mu.Lock()
 		ts.state = stateFailed
 		ts.mu.Unlock()
 
-		return fmt.Errorf("failure starting process: %s", err)
+		return fmt.Errorf("failure starting process: %w", err)
 	}
 
 	go func() {
 		err := ts.cmd.Wait()
 
 		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("failed to close stdout: %s", err)
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
 		}
 		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("failed to close stderr: %s", err)
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
 		}
 
 		ps := ts.cmd.ProcessState
 		sy := ps.Sys().(syscall.WaitStatus)
 
-		log.Printf("Process %d exited with status %d: %v", ps.Pid(), sy.ExitStatus(), err)
+		log.Printf("%s: Process %d exited with status %d: %v",
+			testserverMessagePrefix,
+			ps.Pid(),
+			sy.ExitStatus(),
+			err)
 		log.Print(ps.String())
 
 		ts.mu.Lock()
@@ -590,7 +599,7 @@ func (ts *testServerImpl) Start() error {
 	if ts.pgURL.u == nil {
 		go func() {
 			if err := ts.pollListeningURLFile(); err != nil {
-				log.Printf("%v", err)
+				log.Printf("%s: %v", testserverMessagePrefix, err)
 				close(ts.pgURL.set)
 				ts.Stop()
 			}
@@ -608,11 +617,13 @@ func (ts *testServerImpl) Stop() {
 	defer ts.mu.RUnlock()
 
 	if ts.state == stateNew {
-		log.Fatal("Stop() called, but Start() was never called")
+		log.Fatalf("%s: Stop() called, but Start() was never called", testserverMessagePrefix)
 	}
 	if ts.state == stateFailed {
-		log.Fatalf("Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
-			ts.Stdout(), ts.Stderr())
+		log.Fatalf("%s: Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
+			testserverMessagePrefix,
+			ts.Stdout(),
+			ts.Stderr())
 		return
 	}
 
