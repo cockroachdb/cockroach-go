@@ -16,8 +16,13 @@ package testserver_test
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
@@ -177,4 +182,121 @@ func TestTenant(t *testing.T) {
 	if _, err := db.Exec("SELECT crdb_internal.create_tenant(123)"); err == nil {
 		t.Fatal("expected an error when creating a tenant since secondary tenants should not be able to do so")
 	}
+}
+
+func TestFlockOnDownloadedCRDB(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		instantiation func(*testing.T) (*sql.DB, func())
+	}{
+		{
+			// It will print "waiting for download of ..." in log for about 30 seconds.
+			name: "DownloadPassed",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testFlockWithDownloadPassing(t)
+			},
+		}, {
+			name: "DownloadKilled",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testFlockWithDownloadKilled(t)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, stop := tc.instantiation(t)
+			defer stop()
+			if _, err := db.Exec("SELECT 1"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+var wg = sync.WaitGroup{}
+
+// testFlockWithDownloadPassing is to test the flock over downloaded CRDB binary with
+// two goroutines, the second goroutine waits for the first goroutine to
+// finish downloading the CRDB binary into a local file.
+func testFlockWithDownloadPassing(
+	t *testing.T, opts ...testserver.TestServerOpt,
+) (*sql.DB, func()) {
+
+	localFile, err := getLocalFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove existing local file, to ensure that the first goroutine will download the CRDB binary.
+	if err := removeExistingLocalFile(localFile); err != nil {
+		t.Fatal(err)
+	}
+
+	wg.Add(2)
+	var db *sql.DB
+	var stop func()
+
+	// First NewDBForTest goroutine to download the CRDB binary to the local file.
+	go func() {
+		db, stop = testserver.NewDBForTest(t, opts...)
+		wg.Done()
+	}()
+	// Wait for 2 seconds, and then start the second NewDBForTest process.
+	time.Sleep(2000 * time.Millisecond)
+	// The second goroutine needs to wait until the first goroutine finishes downloading.
+	// It will print "waiting for download of ..." in log for about 30 seconds.
+	go func() {
+		db, stop = testserver.NewDBForTest(t, opts...)
+		wg.Done()
+	}()
+	wg.Wait()
+	return db, stop
+}
+
+// testFlockWithDownloadKilled is to simulate the case that a NewDBForTest process is
+// killed before finishing downloading CRDB binary, and another NewDBForTest process has
+// to remove the existing local file and redownload.
+func testFlockWithDownloadKilled(t *testing.T) (*sql.DB, func()) {
+	localFile, err := getLocalFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove existing local file, to ensure that the first goroutine will download the CRDB binary.
+	if err := removeExistingLocalFile(localFile); err != nil {
+		t.Fatal(err)
+	}
+
+	// First NewDBForTest process to download the CRDB binary to the local file,
+	// but killed in the middle.
+	_, stop := testserver.NewDBForTest(t, testserver.StopDownloadInMiddleOpt())
+	stop()
+	// Start the second NewDBForTest process.
+	// It will remove the local file and redownload.
+	return testserver.NewDBForTest(t)
+
+}
+
+// getLocalFile returns the to-be-downloaded CRDB binary's local path.
+func getLocalFile() (string, error) {
+	response, err := testserver.GetDownloadResponse()
+	if err != nil {
+		return "", err
+	}
+	filename, err := testserver.GetDownloadFilename(response)
+	if err != nil {
+		return "", err
+	}
+	localFile := filepath.Join(os.TempDir(), filename)
+	return localFile, err
+}
+
+// removeExistingLocalFile removes the existing local file for downloaded CRDB binary.
+func removeExistingLocalFile(localFile string) error {
+	_, err := os.Stat(localFile)
+	if err == nil {
+		if err := os.Remove(localFile); err != nil {
+			return fmt.Errorf("cannot remove local file: %s", err)
+		}
+	}
+	return nil
 }
