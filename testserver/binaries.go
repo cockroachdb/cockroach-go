@@ -42,7 +42,7 @@ const (
 func downloadFile(response *http.Response, filePath string, tc *TestConfig) error {
 	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, writingFileMode)
 	if err != nil {
-		return fmt.Errorf("error creating %s: %s", filePath, err)
+		return fmt.Errorf("error creating %s: %w", filePath, err)
 	}
 	defer func() { _ = output.Close() }()
 
@@ -66,7 +66,7 @@ func downloadFile(response *http.Response, filePath string, tc *TestConfig) erro
 	}
 
 	if _, err := io.Copy(output, response.Body); err != nil {
-		return fmt.Errorf("problem saving %s to %s: %s", response.Request.URL, filePath, err)
+		return fmt.Errorf("problem saving %s to %s: %w", response.Request.URL, filePath, err)
 	}
 
 	// Download was successful, add the rw bits.
@@ -97,7 +97,7 @@ func GetDownloadResponse() (*http.Response, error) {
 			cmd := exec.Command("ldd", "--version")
 			out, err := cmd.Output()
 			if err != nil {
-				log.Printf("%s: out=%q err=%s", cmd.Args, out, err)
+				log.Printf("%s: %s: out=%q err=%v", testserverMessagePrefix, cmd.Args, out, err)
 			} else if muslRE.Match(out) {
 				return "-musl"
 			}
@@ -192,7 +192,7 @@ func downloadLatestBinary(tc *TestConfig) (string, error) {
 	if err != nil {
 		if !errors.Is(err, errStoppedInMiddle) {
 			if err := os.Remove(localFile); err != nil {
-				log.Printf("failed to remove %s: %s", localFile, err)
+				log.Printf("failed to remove %s: %v", localFile, err)
 			}
 		}
 		return "", err
