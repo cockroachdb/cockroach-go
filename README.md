@@ -1,4 +1,4 @@
-# CockroachDB Go Helpers
+# CockroachDB Go Helpers  [![Go Reference](https://pkg.go.dev/badge/github.com/cockroachdb/cockroach-go/v2/crdb.svg)](https://pkg.go.dev/github.com/cockroachdb/cockroach-go/v2/crdb)
 
 This project contains helpers for CockroachDB users writing in Go:
 - `crdb` and its subpackages provide wrapper functions for retrying transactions that fail
