@@ -67,7 +67,7 @@ import (
 // Instead, add context by returning an error that implements either:
 // - a `Cause() error` method, in the manner of github.com/pkg/errors, or
 // - an `Unwrap() error` method, in the manner of the Go 1.13 standard
-//   library.
+// library.
 //
 // To achieve this, you can implement your own error type, or use
 // `errors.Wrap()` from github.com/pkg/errors or
@@ -134,7 +134,7 @@ func Execute(fn func() error) (err error) {
 // Instead, add context by returning an error that implements either:
 // - a `Cause() error` method, in the manner of github.com/pkg/errors, or
 // - an `Unwrap() error` method, in the manner of the Go 1.13 standard
-//   library.
+// library.
 //
 // To achieve this, you can implement your own error type, or use
 // `errors.Wrap()` from github.com/pkg/errors or
