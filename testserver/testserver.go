@@ -190,6 +190,7 @@ type testServerArgs struct {
 	storeOnDisk  bool    // to save database in disk
 	storeMemSize float64 // the proportion of available memory allocated to test server
 	testConfig   TestConfig
+	nonStableDB  bool
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -227,6 +228,14 @@ func SetStoreMemSizeOpt(memSize float64) TestServerOpt {
 func RootPasswordOpt(pw string) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.rootPW = pw
+	}
+}
+
+// NonStableDbOpt is a TestServer option that can be passed to NewTestServer to
+// download the latest beta version of CRDB, but not necessary a stable one.
+func NonStableDbOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.nonStableDB = true
 	}
 }
 
@@ -272,7 +281,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	if cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
 	} else {
-		cockroachBinary, err = downloadLatestBinary(&serverArgs.testConfig)
+		cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.nonStableDB)
 		if err != nil {
 			if errors.Is(err, errStoppedInMiddle) {
 				// If the testserver is intentionally killed in the middle of downloading,
