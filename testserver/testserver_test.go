@@ -72,31 +72,109 @@ func TestRunServer(t *testing.T) {
 		{
 			name: "InsecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+				return newTenantDBForTest(
+					t,
+					false,           /* secure */
+					false,           /* proxy */
+					noPW,            /* pw */
+					false,           /* diskStore */
+					defStoreMemSize, /* storeMemSize */
+					false,           /* nonStableDB */
+				)
 			},
 		},
 		{
 			name: "SecureTenant",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+				return newTenantDBForTest(
+					t,
+					true,            /* secure */
+					false,           /* proxy */
+					noPW,            /* pw */
+					false,           /* diskStore */
+					defStoreMemSize, /* storeMemSize */
+					false,           /* nonStableDB */
+				)
 			},
 		},
 		{
 			name: "SecureTenantCustomPassword",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, false /* proxy */, testPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+				return newTenantDBForTest(t,
+					true,            /* secure */
+					false,           /* proxy */
+					testPW,          /* pw */
+					false,           /* diskStore */
+					defStoreMemSize, /* storeMemSize */
+					false,           /* nonStableDB */
+				)
 			},
 		},
 		{
-			name: "SecureTenantThroughProxy",
+			name:          "InsecureNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.NonStableDbOpt()) },
+		},
+		{
+			name: "InsecureWithCustomizedMemSizeNonStable",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+				return testserver.NewDBForTest(t, testserver.SetStoreMemSizeOpt(0.3), testserver.NonStableDbOpt())
 			},
 		},
 		{
-			name: "SecureTenantThroughProxyCustomPassword",
+			name: "SecureClientCertNonStable",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return newTenantDBForTest(t, true /* secure */, true /* proxy */, testPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+				return testserver.NewDBForTest(t, testserver.SecureOpt(), testserver.NonStableDbOpt())
+			},
+		},
+		{
+			name: "SecurePasswordNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.SecureOpt(),
+					testserver.RootPasswordOpt(testPW), testserver.NonStableDbOpt())
+			},
+		},
+		{
+			name: "InsecureTenantStoreOnDiskNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.StoreOnDiskOpt(), testserver.NonStableDbOpt())
+			},
+		},
+		{
+			name: "SecureTenantStoreOnDiskNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t,
+					testserver.SecureOpt(),
+					testserver.StoreOnDiskOpt(),
+					testserver.NonStableDbOpt(),
+				)
+			},
+		},
+		{
+			name: "SecureTenantThroughProxyNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(
+					t,
+					true,            /* secure */
+					true,            /* proxy */
+					noPW,            /* pw */
+					false,           /* diskStore */
+					defStoreMemSize, /* storeMemSize */
+					true,            /* nonStableDB */
+				)
+			},
+		},
+		{
+			name: "SecureTenantThroughProxyCustomPasswordNonStable",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return newTenantDBForTest(
+					t,
+					true,            /* secure */
+					true,            /* proxy */
+					testPW,          /* pw */
+					false,           /* diskStore */
+					defStoreMemSize, /* storeMemSize */
+					true,            /* nonStableDB */
+				)
 			},
 		},
 	} {
@@ -131,7 +209,13 @@ type tenantInterface interface {
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
 func newTenantDBForTest(
-	t *testing.T, secure bool, proxy bool, pw string, diskStore bool, storeMemSize float64,
+	t *testing.T,
+	secure bool,
+	proxy bool,
+	pw string,
+	diskStore bool,
+	storeMemSize float64,
+	nonStableDB bool,
 ) (*sql.DB, func()) {
 	t.Helper()
 	var opts []testserver.TestServerOpt
@@ -148,6 +232,9 @@ func newTenantDBForTest(
 		opts = append(opts, testserver.SetStoreMemSizeOpt(storeMemSize))
 	} else {
 		t.Fatal("Percentage memory size for data storage cannot be nagative")
+	}
+	if nonStableDB {
+		opts = append(opts, testserver.NonStableDbOpt())
 	}
 	ts, err := testserver.NewTestServer(opts...)
 	if err != nil {
@@ -173,7 +260,16 @@ func newTenantDBForTest(
 }
 
 func TestTenant(t *testing.T) {
-	db, stop := newTenantDBForTest(t, false /* secure */, false /* proxy */, noPW, false /* diskStore */, defStoreMemSize /* storeMemSize */)
+	db, stop := newTenantDBForTest(
+		t,
+		false,           /* secure */
+		false,           /* proxy */
+		noPW,            /* pw */
+		false,           /* diskStore */
+		defStoreMemSize, /* storeMemSize */
+		false,           /* nonStableDB */
+	)
+
 	defer stop()
 	if _, err := db.Exec("SELECT 1"); err != nil {
 		t.Fatal(err)
@@ -221,7 +317,7 @@ func testFlockWithDownloadPassing(
 	t *testing.T, opts ...testserver.TestServerOpt,
 ) (*sql.DB, func()) {
 
-	localFile, err := getLocalFile()
+	localFile, err := getLocalFile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +352,7 @@ func testFlockWithDownloadPassing(
 // killed before finishing downloading CRDB binary, and another NewDBForTest process has
 // to remove the existing local file and redownload.
 func testFlockWithDownloadKilled(t *testing.T) (*sql.DB, func()) {
-	localFile, err := getLocalFile()
+	localFile, err := getLocalFile(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,12 +373,12 @@ func testFlockWithDownloadKilled(t *testing.T) (*sql.DB, func()) {
 }
 
 // getLocalFile returns the to-be-downloaded CRDB binary's local path.
-func getLocalFile() (string, error) {
-	response, err := testserver.GetDownloadResponse()
+func getLocalFile(nonStable bool) (string, error) {
+	response, latestStableVersion, err := testserver.GetDownloadResponse(nonStable)
 	if err != nil {
 		return "", err
 	}
-	filename, err := testserver.GetDownloadFilename(response)
+	filename, err := testserver.GetDownloadFilename(response, nonStable, latestStableVersion)
 	if err != nil {
 		return "", err
 	}
