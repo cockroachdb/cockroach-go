@@ -340,8 +340,10 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			// Create cert and key pair for the root user (SQL client).
 			{"cert", "create-client", "root"},
 		} {
-			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
-				return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+			createCertCmd := exec.Command(cockroachBinary, append(args, certArgs...)...)
+			log.Printf("%s executing: %s", testserverMessagePrefix, createCertCmd)
+			if err := createCertCmd.Run(); err != nil {
+				return nil, fmt.Errorf("%s command %s failed: %w", testserverMessagePrefix, createCertCmd, err)
 			}
 		}
 		secureOpt = "--certs-dir=" + certsDir
@@ -353,17 +355,17 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	versionCmd := exec.Command(cockroachBinary, "version")
 	versionOutput, err := versionCmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s command %s failed: %w", testserverMessagePrefix, versionCmd, err)
 	}
 	reader := bufio.NewReader(bytes.NewReader(versionOutput))
 	versionLine, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s failed to read version: %w", testserverMessagePrefix, err)
 	}
 	versionLineTokens := strings.Fields(versionLine)
 	v, err := version.Parse(versionLineTokens[2])
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s failed to parse version: %w", testserverMessagePrefix, err)
 	}
 	startCmd := "start-single-node"
 	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
@@ -402,7 +404,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	ts.pgURL.set = make(chan struct{})
 
 	if err := ts.Start(); err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s Start failed: %w", testserverMessagePrefix, err)
 	}
 
 	if ts.PGURL() == nil {
@@ -410,7 +412,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	if err := ts.WaitForInit(); err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s WaitForInit failed: %w", testserverMessagePrefix, err)
 	}
 
 	return ts, nil
@@ -556,6 +558,7 @@ func (ts *testServerImpl) Start() error {
 		ts.cmd.Env = append(ts.cmd.Env, k+"="+v)
 	}
 
+	log.Printf("executing: %s", ts.cmd)
 	err := ts.cmd.Start()
 	if ts.cmd.Process != nil {
 		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
@@ -573,28 +576,28 @@ func (ts *testServerImpl) Start() error {
 		ts.state = stateFailed
 		ts.mu.Unlock()
 
-		return fmt.Errorf("failure starting process: %w", err)
+		return fmt.Errorf("command %s failed: %w", ts.cmd, err)
 	}
 
 	go func() {
 		err := ts.cmd.Wait()
 
-		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
+		if closeErr := ts.stdoutBuf.Close(); closeErr != nil {
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, closeErr)
 		}
-		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
+		if closeErr := ts.stderrBuf.Close(); closeErr != nil {
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
 		}
 
 		ps := ts.cmd.ProcessState
 		sy := ps.Sys().(syscall.WaitStatus)
 
-		log.Printf("%s: Process %d exited with status %d: %v",
+		log.Printf("%s: command %s exited with status %d: %v",
 			testserverMessagePrefix,
-			ps.Pid(),
+			ts.cmd,
 			sy.ExitStatus(),
 			err)
-		log.Print(ps.String())
+		log.Printf("%s process state: %s", testserverMessagePrefix, ps.String())
 
 		ts.mu.Lock()
 		if sy.ExitStatus() == 0 {
@@ -608,7 +611,7 @@ func (ts *testServerImpl) Start() error {
 	if ts.pgURL.u == nil {
 		go func() {
 			if err := ts.pollListeningURLFile(); err != nil {
-				log.Printf("%s: %v", testserverMessagePrefix, err)
+				log.Printf("%s failed to poll listening URL file: %v", testserverMessagePrefix, err)
 				close(ts.pgURL.set)
 				ts.Stop()
 			}

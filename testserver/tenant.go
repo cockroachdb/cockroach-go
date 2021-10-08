@@ -82,14 +82,16 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			// Create tenant client certificate.
 			{"mt", "cert", "create-tenant-client", fmt.Sprint(tenantID)},
 		} {
-			if err := exec.Command(cockroachBinary, append(args, certArgs...)...).Run(); err != nil {
-				return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+            createCertCmd := exec.Command(cockroachBinary, append(args, certArgs...)...)
+			log.Printf("%s executing: %s", tenantserverMessagePrefix, createCertCmd)
+			if err := createCertCmd.Run(); err != nil {
+                return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
 			}
 		}
 	}
 	// Create a new tenant.
 	if err := ts.WaitForInit(); err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s WaitForInit failed: %w", tenantserverMessagePrefix, err)
 	}
 	pgURL := ts.PGURL()
 	if pgURL == nil {
@@ -97,11 +99,11 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 	db, err := sql.Open("postgres", pgURL.String())
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s cannot open connection: %w", tenantserverMessagePrefix, err)
 	}
 	defer db.Close()
 	if _, err := db.Exec(fmt.Sprintf("SELECT crdb_internal.create_tenant(%d)", tenantID)); err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s cannot create tenant: %w", tenantserverMessagePrefix, err)
 	}
 
 	// TODO(asubiotto): We should pass ":0" as the sql addr to push port
@@ -112,13 +114,13 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	addr := func() (string, error) {
 		l, err := net.Listen("tcp", ":0")
 		if err != nil {
-			return "", fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+			return "", fmt.Errorf("%s cannot listen on a port: %w", tenantserverMessagePrefix, err)
 		}
 		// Use localhost because of certificate validation issues otherwise
 		// (something about IP SANs).
 		addr := "localhost:" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 		if err := l.Close(); err != nil {
-			return "", fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+			return "", fmt.Errorf("%s cannot close listener: %w", tenantserverMessagePrefix, err)
 		}
 		return addr, nil
 	}
@@ -156,8 +158,9 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			"--skip-verify",
 		}
 		cmd := exec.Command(cockroachBinary, args...)
+		log.Printf("%s executing: %s", tenantserverMessagePrefix, cmd)
 		if err := cmd.Start(); err != nil {
-			return "", fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+			return "", fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, cmd, err)
 		}
 		if cmd.Process != nil {
 			log.Printf("%s: process %d started: %s", tenantserverMessagePrefix, cmd.Process.Pid,
@@ -168,7 +171,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		return ts.proxyAddr, nil
 	}()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, err
 	}
 
 	args := []string{
@@ -204,15 +207,15 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 
 	tenant.setPGURL(&tenantURL)
 	if err := tenant.Start(); err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s Start failed : %w", tenantserverMessagePrefix, err)
 	}
 	if err := tenant.WaitForInit(); err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s WaitForInit failed: %w", tenantserverMessagePrefix, err)
 	}
 
 	tenantDB, err := sql.Open("postgres", tenantURL.String())
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s cannot open connection: %w", tenantserverMessagePrefix, err)
 	}
 	defer tenantDB.Close()
 
@@ -228,7 +231,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if rootPassword != "" {
 		// Allow root to login via password.
 		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", rootPassword); err != nil {
-			return nil, fmt.Errorf("%s: %w", tenantserverMessagePrefix, err)
+			return nil, fmt.Errorf("%s cannot set password: %w", tenantserverMessagePrefix, err)
 		}
 
 		// NB: need the lock since *tenantURL is owned by `tenant`.
