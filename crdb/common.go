@@ -39,13 +39,16 @@ type Tx interface {
 // fn is subject to the same restrictions as the fn passed to ExecuteTx.
 func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 	defer func() {
-		if err == nil {
+		if r := recover(); r == nil && err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
 			_ = tx.Commit(ctx)
 		} else {
 			// We always need to execute a Rollback() so sql.DB releases the
 			// connection.
 			_ = tx.Rollback(ctx)
+			if r != nil {
+				panic(r)
+			}
 		}
 	}()
 	// Specify that we intend to retry this txn in case of CockroachDB retryable
