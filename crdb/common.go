@@ -39,15 +39,23 @@ type Tx interface {
 // fn is subject to the same restrictions as the fn passed to ExecuteTx.
 func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 	defer func() {
-		if err == nil {
+		r := recover()
+
+		if r == nil && err == nil {
 			// Ignore commit errors. The tx has already been committed by RELEASE.
 			_ = tx.Commit(ctx)
-		} else {
-			// We always need to execute a Rollback() so sql.DB releases the
-			// connection.
-			_ = tx.Rollback(ctx)
+			return
+		}
+
+		// We always need to execute a Rollback() so sql.DB releases the
+		// connection.
+		_ = tx.Rollback(ctx)
+
+		if r != nil {
+			panic(r)
 		}
 	}()
+
 	// Specify that we intend to retry this txn in case of CockroachDB retryable
 	// errors.
 	if err = tx.Exec(ctx, "SAVEPOINT cockroach_restart"); err != nil {
@@ -58,31 +66,35 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 	const maxRetries = 50
 	retryCount := 0
 	for {
-		released := false
-		err = fn()
-		if err == nil {
+		releaseFailed := false
+		if err = fn(); err == nil {
 			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
 			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
-			released = true
 			if err = tx.Exec(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
 				return nil
 			}
+			releaseFailed = true
 		}
-		// We got an error; let's see if it's a retryable one and, if so, restart.
+
+		// We got an error (i.e. err != nil) if at this point
+
+		// Let's see if it's a retryable one and, if so, restart.
 		if !errIsRetryable(err) {
-			if released {
+			if releaseFailed {
 				err = newAmbiguousCommitError(err)
 			}
 			return err
 		}
 
-		if retryErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); retryErr != nil {
-			return newTxnRestartError(retryErr, err)
+		if rollbackErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); rollbackErr != nil {
+			err = newTxnRestartError(rollbackErr, err)
+			return err
 		}
 
 		retryCount++
 		if retryCount > maxRetries {
-			return newMaxRetriesExceededError(err, maxRetries)
+			err = newMaxRetriesExceededError(err, maxRetries)
+			return err
 		}
 	}
 }
