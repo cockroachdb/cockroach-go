@@ -339,7 +339,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			// Create cert and key pair for the cockroach node.
 			{"cert", "create-node", "localhost"},
 			// Create cert and key pair for the root user (SQL client).
-			{"cert", "create-client", "root"},
+			{"cert", "create-client", "root", "--also-generate-pkcs8-key"},
 		} {
 			createCertCmd := exec.Command(cockroachBinary, append(args, certArgs...)...)
 			log.Printf("%s executing: %s", testserverMessagePrefix, createCertCmd)
