@@ -103,6 +103,7 @@ type TestServer interface {
 // testServerImpl is a TestServer implementation.
 type testServerImpl struct {
 	mu         sync.RWMutex
+	version    *version.Version
 	serverArgs testServerArgs
 	state      int
 	baseDir    string
@@ -393,6 +394,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	ts := &testServerImpl{
 		serverArgs:       *serverArgs,
+		version:          v,
 		state:            stateNew,
 		baseDir:          baseDir,
 		cmdArgs:          args,
@@ -492,7 +494,7 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 			return err
 		}
 		defer db.Close()
-		if _, err := db.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", pw); err != nil {
+		if _, err := db.Exec(`ALTER USER root WITH PASSWORD $1`, pw); err != nil {
 			return err
 		}
 
