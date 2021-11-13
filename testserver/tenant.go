@@ -188,6 +188,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 
 	tenant := &testServerImpl{
 		serverArgs: ts.serverArgs,
+		version:    ts.version,
 		state:      stateNew,
 		baseDir:    ts.baseDir,
 		cmdArgs:    args,
@@ -230,7 +231,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 
 	if rootPassword != "" {
 		// Allow root to login via password.
-		if _, err := tenantDB.Exec(`ALTER USER $1 WITH PASSWORD $2`, "root", rootPassword); err != nil {
+		if _, err := tenantDB.Exec(`ALTER USER root WITH PASSWORD $1`, rootPassword); err != nil {
 			return nil, fmt.Errorf("%s cannot set password: %w", tenantserverMessagePrefix, err)
 		}
 
