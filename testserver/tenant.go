@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	"log"
 	"net"
 	"net/url"
@@ -74,19 +75,16 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	certsDir := filepath.Join(ts.baseDir, "certs")
 	if ts.serverArgs.secure {
 		secureFlag = "--certs-dir=" + certsDir
-		certArgs := []string{
-			secureFlag,
-			"--ca-key=" + filepath.Join(certsDir, "ca.key"),
+		// Create tenant client certificate.
+		certArgs := []string{"mt", "cert", "create-tenant-client", fmt.Sprint(tenantID)}
+		if ts.version.AtLeast(version.MustParse("v22.1.0-alpha")) {
+			certArgs = append(certArgs, "127.0.0.1", "[::1]", "localhost", "*.local")
 		}
-		for _, args := range [][]string{
-			// Create tenant client certificate.
-			{"mt", "cert", "create-tenant-client", fmt.Sprint(tenantID)},
-		} {
-            createCertCmd := exec.Command(cockroachBinary, append(args, certArgs...)...)
-			log.Printf("%s executing: %s", tenantserverMessagePrefix, createCertCmd)
-			if err := createCertCmd.Run(); err != nil {
-                return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
-			}
+		certArgs = append(certArgs, secureFlag, "--ca-key=" + filepath.Join(certsDir, "ca.key"))
+        createCertCmd := exec.Command(cockroachBinary, certArgs...)
+		log.Printf("%s executing: %s", tenantserverMessagePrefix, createCertCmd)
+		if err := createCertCmd.Run(); err != nil {
+            return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
 		}
 	}
 	// Create a new tenant.
