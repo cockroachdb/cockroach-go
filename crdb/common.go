@@ -67,7 +67,8 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 	retryCount := 0
 	for {
 		releaseFailed := false
-		if err = fn(); err == nil {
+		err = fn()
+		if err == nil {
 			// RELEASE acts like COMMIT in CockroachDB. We use it since it gives us an
 			// opportunity to react to retryable errors, whereas tx.Commit() doesn't.
 			if err = tx.Exec(ctx, "RELEASE SAVEPOINT cockroach_restart"); err == nil {
@@ -76,9 +77,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			releaseFailed = true
 		}
 
-		// We got an error (i.e. err != nil) if at this point
-
-		// Let's see if it's a retryable one and, if so, restart.
+		// We got an error; let's see if it's a retryable one and, if so, restart.
 		if !errIsRetryable(err) {
 			if releaseFailed {
 				err = newAmbiguousCommitError(err)
@@ -87,14 +86,12 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		}
 
 		if rollbackErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); rollbackErr != nil {
-			err = newTxnRestartError(rollbackErr, err)
-			return err
+			return newTxnRestartError(rollbackErr, err)
 		}
 
 		retryCount++
 		if retryCount > maxRetries {
-			err = newMaxRetriesExceededError(err, maxRetries)
-			return err
+			return newMaxRetriesExceededError(err, maxRetries)
 		}
 	}
 }
