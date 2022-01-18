@@ -71,6 +71,9 @@ func newMaxRetriesExceededError(err error, maxRetries int) *MaxRetriesExceededEr
 	}
 }
 
+// Error implements the error interface.
+func (e *MaxRetriesExceededError) Error() string { return e.msg }
+
 // TxnRestartError represents an error when restarting a transaction. `cause` is
 // the error from restarting the txn and `retryCause` is the original error which
 // triggered the restart.
