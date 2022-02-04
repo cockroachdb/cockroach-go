@@ -101,6 +101,26 @@ func Execute(fn func() error) (err error) {
 	}
 }
 
+type txConfigKey struct {}
+
+// WithMaxRetries configures context so that ExecuteTx retries tx specified
+// number of times when encountering retryable errors.
+// Setting retries to 0 will retry indefinitely.
+func WithMaxRetries(ctx context.Context, retries int) context.Context {
+	return context.WithValue(ctx, txConfigKey{}, retries)
+}
+
+func numRetriesFromContext(ctx context.Context) int {
+	const defaultRetries = 50
+
+	if v := ctx.Value(txConfigKey{}); v != nil {
+		if retries, ok := v.(int); ok && retries >= 0 {
+			return retries
+		}
+	}
+	return defaultRetries
+}
+
 // ExecuteTx runs fn inside a transaction and retries it as needed. On
 // non-retryable failures, the transaction is aborted and rolled back; on
 // success, the transaction is committed.
