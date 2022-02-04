@@ -62,8 +62,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
-	// TODO(rafi): make the maxRetryCount configurable. Maybe pass it in the context?)
-	const maxRetries = 50
+	maxRetries := numRetriesFromContext(ctx)
 	retryCount := 0
 	for {
 		releaseFailed := false
@@ -90,7 +89,7 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		}
 
 		retryCount++
-		if retryCount > maxRetries {
+		if maxRetries > 0 && retryCount > maxRetries {
 			return newMaxRetriesExceededError(err, maxRetries)
 		}
 	}
