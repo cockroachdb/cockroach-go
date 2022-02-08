@@ -35,6 +35,19 @@ func TestExecuteTx(t *testing.T) {
 	}
 }
 
+// TestConfigureRetries verifies that the number of retries can be specified
+// via context.
+func TestConfigureRetries(t *testing.T) {
+	ctx := context.Background()
+	if numRetriesFromContext(ctx) != defaultRetries {
+		t.Fatal("expect default number of retries")
+	}
+	ctx = WithMaxRetries(context.Background(), 123 + defaultRetries)
+	if numRetriesFromContext(ctx) != defaultRetries + 123 {
+		t.Fatal("expected default+123 retires")
+	}
+}
+
 type stdlibWriteSkewTest struct {
 	db *sql.DB
 }
