@@ -19,6 +19,7 @@ package crdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/lib/pq"
 )
@@ -193,16 +194,17 @@ func errIsRetryable(err error) bool {
 }
 
 func errCode(err error) string {
-	switch t := errorCause(err).(type) {
-	case *pq.Error:
-		return string(t.Code)
-
-	case errWithSQLState:
-		return t.SQLState()
-
-	default:
-		return ""
+	var pqe *pq.Error
+	if errors.As(err, &pqe) {
+		return string(pqe.Code)
 	}
+
+	var sqlErr errWithSQLState
+	if errors.As(err, &sqlErr) {
+		return sqlErr.SQLState()
+	}
+
+	return ""
 }
 
 // errWithSQLState is implemented by pgx (pgconn.PgError).
