@@ -99,6 +99,8 @@ type TestServer interface {
 	// WaitForInit retries until a SQL connection is successfully established to
 	// this server.
 	WaitForInit() error
+	// BaseDir returns directory StoreOnDiskOpt writes to if used.
+	BaseDir() string
 }
 
 // testServerImpl is a TestServer implementation.
@@ -438,6 +440,11 @@ func (ts *testServerImpl) Stdout() string {
 // Stderr returns the entire contents of the process' stderr.
 func (ts *testServerImpl) Stderr() string {
 	return ts.stderrBuf.String()
+}
+
+// BaseDir returns directory StoreOnDiskOpt writes to if used.
+func (ts *testServerImpl) BaseDir() string {
+	return ts.baseDir
 }
 
 // PGURL returns the postgres connection URL to reach the started
