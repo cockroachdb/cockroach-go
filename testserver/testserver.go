@@ -186,12 +186,23 @@ type TestConfig struct {
 }
 
 type testServerArgs struct {
-	secure       bool
-	rootPW       string  // if nonempty, set as pw for root
-	storeOnDisk  bool    // to save database in disk
-	storeMemSize float64 // the proportion of available memory allocated to test server
-	testConfig   TestConfig
-	nonStableDB  bool
+	secure          bool
+	rootPW          string  // if nonempty, set as pw for root
+	storeOnDisk     bool    // to save database in disk
+	storeMemSize    float64 // the proportion of available memory allocated to test server
+	testConfig      TestConfig
+	nonStableDB     bool
+	cockroachBinary string // path to cockroach executable file
+}
+
+// CockroachBinaryPath is a TestServer option that can be passed to
+// NewTestServer to specify the path of the cockroach binary. This can be used
+// to avoid downloading cockroach if running tests in an environment with no
+// internet connection, for instance.
+func CockroachBinaryPath(executablePath string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.cockroachBinary = executablePath
+	}
 }
 
 // SecureOpt is a TestServer option that can be passed to NewTestServer to
@@ -270,19 +281,17 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		applyOptToArgs(serverArgs)
 	}
 
-	var cockroachBinary string
-
 	if len(*customBinaryFlag) > 0 {
-		cockroachBinary = *customBinaryFlag
+		serverArgs.cockroachBinary = *customBinaryFlag
 	} else if customBinaryEnv := os.Getenv("COCKROACH_BINARY"); customBinaryEnv != "" {
-		cockroachBinary = customBinaryEnv
+		serverArgs.cockroachBinary = customBinaryEnv
 	}
 
 	var err error
-	if cockroachBinary != "" {
-		log.Printf("Using custom cockroach binary: %s", cockroachBinary)
+	if serverArgs.cockroachBinary != "" {
+		log.Printf("Using custom cockroach binary: %s", serverArgs.cockroachBinary)
 	} else {
-		cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.nonStableDB)
+		serverArgs.cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.nonStableDB)
 		if err != nil {
 			if errors.Is(err, errStoppedInMiddle) {
 				// If the testserver is intentionally killed in the middle of downloading,
@@ -290,9 +299,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				return nil, err
 			}
 			log.Printf("%s: Failed to fetch latest binary: %v attempting to use cockroach binary from your PATH", testserverMessagePrefix, err)
-			cockroachBinary = "cockroach"
+			serverArgs.cockroachBinary = "cockroach"
 		} else {
-			log.Printf("Using automatically-downloaded binary: %s", cockroachBinary)
+			log.Printf("Using automatically-downloaded binary: %s", serverArgs.cockroachBinary)
 		}
 	}
 
@@ -341,7 +350,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			// Create cert and key pair for the root user (SQL client).
 			{"cert", "create-client", "root", "--also-generate-pkcs8-key"},
 		} {
-			createCertCmd := exec.Command(cockroachBinary, append(args, certArgs...)...)
+			createCertCmd := exec.Command(serverArgs.cockroachBinary, append(args, certArgs...)...)
 			log.Printf("%s executing: %s", testserverMessagePrefix, createCertCmd)
 			if err := createCertCmd.Run(); err != nil {
 				return nil, fmt.Errorf("%s command %s failed: %w", testserverMessagePrefix, createCertCmd, err)
@@ -353,7 +362,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	// v19.1 and earlier do not have the `start-single-node` subcommand,
 	// so use `start` for those versions.
 	// TODO(rafi): Remove the version check and `start` once we stop testing 19.1.
-	versionCmd := exec.Command(cockroachBinary, "version")
+	versionCmd := exec.Command(serverArgs.cockroachBinary, "version")
 	versionOutput, err := versionCmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s command %s failed: %w", testserverMessagePrefix, versionCmd, err)
@@ -381,7 +390,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	args := []string{
-		cockroachBinary,
+		serverArgs.cockroachBinary,
 		startCmd,
 		"--logtostderr",
 		secureOpt,
