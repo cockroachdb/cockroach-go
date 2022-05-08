@@ -195,11 +195,11 @@ type testServerArgs struct {
 	cockroachBinary string // path to cockroach executable file
 }
 
-// CockroachBinaryPath is a TestServer option that can be passed to
+// CockroachBinaryPathOpt is a TestServer option that can be passed to
 // NewTestServer to specify the path of the cockroach binary. This can be used
 // to avoid downloading cockroach if running tests in an environment with no
 // internet connection, for instance.
-func CockroachBinaryPath(executablePath string) TestServerOpt {
+func CockroachBinaryPathOpt(executablePath string) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.cockroachBinary = executablePath
 	}
