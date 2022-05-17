@@ -50,6 +50,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -190,6 +191,7 @@ type testServerArgs struct {
 	rootPW       string  // if nonempty, set as pw for root
 	storeOnDisk  bool    // to save database in disk
 	storeMemSize float64 // the proportion of available memory allocated to test server
+	httpPort     int
 	testConfig   TestConfig
 	nonStableDB  bool
 }
@@ -237,6 +239,14 @@ func RootPasswordOpt(pw string) TestServerOpt {
 func NonStableDbOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.nonStableDB = true
+	}
+}
+
+// ExposeConsoleOpt is a TestServer option that can be passed to NewTestServer to
+// expose the console of the server on the given port.
+func ExposeConsoleOpt(port int) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.httpPort = port
 	}
 }
 
@@ -387,7 +397,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		secureOpt,
 		"--host=localhost",
 		"--port=0",
-		"--http-port=0",
+		"--http-port="+strconv.Itoa(serverArgs.httpPort),
 		storeArg,
 		"--listening-url-file=" + listeningURLFile,
 	}
