@@ -13,8 +13,8 @@ jobs:
     strategy:
       matrix:
         go:
-          - "1.16"
           - "1.17"
+          - "1.18"
     steps:
     - uses: actions/checkout@v2
 
@@ -52,7 +52,5 @@ jobs:
         ! git grep -LE '^// Copyright' -- '*.go'
     - name: errchk
       run: errcheck -ignore "Close|Init|AutoMigrate"  ./...
-    - name: unconvert
-      run: unconvert ./...
     - name: staticcheck
       run: staticcheck ./...
