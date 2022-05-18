@@ -555,6 +555,11 @@ func (ts *testServerImpl) Start() error {
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
 	}
 
+	// Set the working directory of the cockroach process to our temp folder.
+	// This stops cockroach from polluting the project directory with _dump
+	// folders.
+	ts.cmd.Dir = ts.baseDir
+
 	if len(ts.stdout) > 0 {
 		wr, err := newFileLogWriter(ts.stdout)
 		if err != nil {
