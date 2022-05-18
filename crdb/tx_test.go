@@ -42,8 +42,8 @@ func TestConfigureRetries(t *testing.T) {
 	if numRetriesFromContext(ctx) != defaultRetries {
 		t.Fatal("expect default number of retries")
 	}
-	ctx = WithMaxRetries(context.Background(), 123 + defaultRetries)
-	if numRetriesFromContext(ctx) != defaultRetries + 123 {
+	ctx = WithMaxRetries(context.Background(), 123+defaultRetries)
+	if numRetriesFromContext(ctx) != defaultRetries+123 {
 		t.Fatal("expected default+123 retires")
 	}
 }

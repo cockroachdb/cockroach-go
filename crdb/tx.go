@@ -102,7 +102,7 @@ func Execute(fn func() error) (err error) {
 	}
 }
 
-type txConfigKey struct {}
+type txConfigKey struct{}
 
 // WithMaxRetries configures context so that ExecuteTx retries tx specified
 // number of times when encountering retryable errors.

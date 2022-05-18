@@ -80,11 +80,11 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		if ts.version.AtLeast(version.MustParse("v22.1.0-alpha")) {
 			certArgs = append(certArgs, "127.0.0.1", "[::1]", "localhost", "*.local")
 		}
-		certArgs = append(certArgs, secureFlag, "--ca-key=" + filepath.Join(certsDir, "ca.key"))
-        createCertCmd := exec.Command(cockroachBinary, certArgs...)
+		certArgs = append(certArgs, secureFlag, "--ca-key="+filepath.Join(certsDir, "ca.key"))
+		createCertCmd := exec.Command(cockroachBinary, certArgs...)
 		log.Printf("%s executing: %s", tenantserverMessagePrefix, createCertCmd)
 		if err := createCertCmd.Run(); err != nil {
-            return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
+			return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
 		}
 	}
 	// Create a new tenant.
