@@ -281,7 +281,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		applyOptToArgs(serverArgs)
 	}
 
-	if len(*customBinaryFlag) > 0 {
+	if serverArgs.cockroachBinary != "" {
+		// CockroachBinaryPathOpt() overrides the flag or env variable.
+	} else if len(*customBinaryFlag) > 0 {
 		serverArgs.cockroachBinary = *customBinaryFlag
 	} else if customBinaryEnv := os.Getenv("COCKROACH_BINARY"); customBinaryEnv != "" {
 		serverArgs.cockroachBinary = customBinaryEnv
