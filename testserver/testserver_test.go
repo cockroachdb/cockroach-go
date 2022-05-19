@@ -188,6 +188,17 @@ func TestRunServer(t *testing.T) {
 	}
 }
 
+func TestCockroachBinaryPathOpt(t *testing.T) {
+	_, err := testserver.NewTestServer(testserver.CockroachBinaryPathOpt("doesnotexist"))
+	if err == nil {
+		t.Fatal("expected err, got nil")
+	}
+	wantSubstring := "command doesnotexist version failed"
+	if msg := err.Error(); !strings.Contains(msg, wantSubstring) {
+		t.Fatalf("error message %q does not contain %q", msg, wantSubstring)
+	}
+}
+
 func TestPGURLWhitespace(t *testing.T) {
 	ts, err := testserver.NewTestServer()
 	if err != nil {
