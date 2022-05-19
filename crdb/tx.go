@@ -20,8 +20,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-
-	"github.com/lib/pq"
 )
 
 // Execute runs fn and retries it as needed. It is used to add retry handling to
@@ -214,11 +212,6 @@ func errIsRetryable(err error) bool {
 }
 
 func errCode(err error) string {
-	var pqe *pq.Error
-	if errors.As(err, &pqe) {
-		return string(pqe.Code)
-	}
-
 	var sqlErr errWithSQLState
 	if errors.As(err, &sqlErr) {
 		return sqlErr.SQLState()
@@ -227,9 +220,7 @@ func errCode(err error) string {
 	return ""
 }
 
-// errWithSQLState is implemented by pgx (pgconn.PgError).
-//
-// TODO(andrei): Add this method to pq.Error and stop depending on lib/pq.
+// errWithSQLState is implemented by pgx (pgconn.PgError) and lib/pq
 type errWithSQLState interface {
 	SQLState() string
 }
