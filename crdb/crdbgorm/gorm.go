@@ -31,8 +31,8 @@ func ExecuteTx(
 	ctx context.Context, db *gorm.DB, opts *sql.TxOptions, fn func(tx *gorm.DB) error,
 ) error {
 	tx := db.WithContext(ctx).Begin(opts)
-	if db.Error != nil {
-		return db.Error
+	if tx.Error != nil {
+		return tx.Error
 	}
 	return crdb.ExecuteInTx(ctx, gormTxAdapter{tx}, func() error { return fn(tx) })
 }

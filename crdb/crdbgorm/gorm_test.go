@@ -16,6 +16,7 @@ package crdbgorm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -44,6 +45,35 @@ func TestExecuteTx(t *testing.T) {
 
 	if err := crdb.ExecuteTxGenericTest(ctx, gormWriteSkewTest{db: gormDB}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestExecuteTxFailsOnTransactionError verifies that the function throws an error if the
+// transaction fails to start
+func TestExecuteTxFailsOnTransactionError(t *testing.T) {
+	ts, err := testserver.NewTestServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	gormDB, err := gorm.Open(postgres.Open(ts.PGURL().String()), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Set to logger.Info and gorm logs all the queries.
+	gormDB.Logger.LogMode(logger.Silent)
+
+	// begin a transaction (bug)
+	incorrectTx := gormDB.Begin()
+
+	// attempt to execute a transaction - fails with no valid transaction
+	err = ExecuteTx(ctx, incorrectTx, nil, func(tx *gorm.DB) error {
+		return tx.Exec("SELECT 1+1").Error
+	})
+
+	if !errors.Is(err, gorm.ErrInvalidTransaction) {
+		t.Fail()
 	}
 }
 
