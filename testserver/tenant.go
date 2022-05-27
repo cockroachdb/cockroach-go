@@ -86,6 +86,25 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		if err := createCertCmd.Run(); err != nil {
 			return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, createCertCmd, err)
 		}
+		if ts.version.AtLeast(version.MustParse("v22.2.0-alpha")) {
+			// Overwrite root client certificate scoped to the system and current tenant.
+			// Tenant scoping is needed for client certificates used to access tenant servers.
+			tenantScopedClientCertArgs := []string{
+				"cert",
+				"create-client",
+				"root",
+				"--also-generate-pkcs8-key",
+				fmt.Sprintf("--tenant-scope=1,%d", tenantID),
+				secureFlag,
+				"--ca-key=" + filepath.Join(certsDir, "ca.key"),
+				"--overwrite",
+			}
+			clientCertCmd := exec.Command(cockroachBinary, tenantScopedClientCertArgs...)
+			log.Printf("%s overwriting root client cert with tenant scoped root client cert: %s", tenantserverMessagePrefix, clientCertCmd)
+			if err := clientCertCmd.Run(); err != nil {
+				return nil, fmt.Errorf("%s command %s failed: %w", tenantserverMessagePrefix, clientCertCmd, err)
+			}
+		}
 	}
 	// Create a new tenant.
 	if err := ts.WaitForInit(); err != nil {
