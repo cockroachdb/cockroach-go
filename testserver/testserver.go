@@ -304,6 +304,11 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	var err error
 	if serverArgs.cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", serverArgs.cockroachBinary)
+		cockroachBinary, err := filepath.Abs(serverArgs.cockroachBinary)
+		if err == nil {
+			// Update path to absolute.
+			serverArgs.cockroachBinary = cockroachBinary
+		}
 	} else {
 		serverArgs.cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.nonStableDB)
 		if err != nil {
