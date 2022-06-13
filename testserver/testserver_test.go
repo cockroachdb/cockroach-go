@@ -189,11 +189,18 @@ func TestRunServer(t *testing.T) {
 }
 
 func TestCockroachBinaryPathOpt(t *testing.T) {
-	_, err := testserver.NewTestServer(testserver.CockroachBinaryPathOpt("doesnotexist"))
+	crdbBinary := "doesnotexist"
+	_, err := testserver.NewTestServer(testserver.CockroachBinaryPathOpt(crdbBinary))
 	if err == nil {
 		t.Fatal("expected err, got nil")
 	}
-	wantSubstring := "command doesnotexist version failed"
+	// Confirm that the command is updated to reference the absolute path
+	// of the custom cockroachdb binary.
+	cmdPath, fPathErr := filepath.Abs(crdbBinary)
+	if fPathErr != nil {
+		cmdPath = crdbBinary
+	}
+	wantSubstring := fmt.Sprintf("command %s version failed", cmdPath)
 	if msg := err.Error(); !strings.Contains(msg, wantSubstring) {
 		t.Fatalf("error message %q does not contain %q", msg, wantSubstring)
 	}
