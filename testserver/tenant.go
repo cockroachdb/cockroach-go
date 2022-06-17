@@ -58,7 +58,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		if ts.state != stateRunning {
+		if ts.nodeStates[0] != stateRunning {
 			return 0, errors.New("TestServer must be running before NewTenantServer may be called")
 		}
 		if ts.isTenant() {
@@ -148,7 +148,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 
 	proxyAddr, err := func() (string, error) {
-		<-ts.pgURL.set
+		<-ts.pgURL[0].set
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -208,6 +208,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		serverArgs: ts.serverArgs,
 		version:    ts.version,
 		state:      stateNew,
+		nodeStates: []int{stateNew},
 		baseDir:    ts.baseDir,
 		cmdArgs:    args,
 		cmd:        make([]*exec.Cmd, ts.serverArgs.numNodes),
@@ -215,15 +216,16 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		stderr:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
 		// TODO(asubiotto): Specify listeningURLFile once we support dynamic
 		//  ports.
-		listeningURLFile: "",
+		listeningURLFile: []string{""},
 	}
 
 	// Start the tenant.
 	// Initialize direct connection to the tenant. We need to use `orig` instead of `pgurl` because if the test server
 	// is using a root password, this password does not carry over to the tenant; client certs will, though.
-	tenantURL := ts.pgURL.orig
+	tenantURL := ts.pgURL[0].orig
 	tenantURL.Host = sqlAddr
-	tenant.pgURL.set = make(chan struct{})
+	tenant.pgURL = make([]pgURLChan, 1)
+	tenant.pgURL[0].set = make(chan struct{})
 
 	tenant.setPGURL(&tenantURL)
 	if err := tenant.Start(); err != nil {

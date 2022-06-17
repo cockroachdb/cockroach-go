@@ -17,7 +17,11 @@ package testserver_test
 import (
 	"database/sql"
 	"fmt"
+	"io"
+	"log"
+	http "net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -184,17 +188,22 @@ func TestRunServer(t *testing.T) {
 				return testserver.NewDBForTest(t, testserver.ThreeNode())
 			},
 		},
+		{
+			name: "Insecure 3 Node On Disk",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.ThreeNode(), testserver.StoreOnDiskOpt())
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation(t)
 			defer stop()
 			var out int
 			row := db.QueryRow("SELECT 1")
-			row.Scan(&out)
+			require.NoError(t, row.Scan(&out))
 			require.Equal(t, out, 1)
-			if _, err := db.Exec("SELECT 1"); err != nil {
-				t.Fatal(err)
-			}
+			_, err := db.Exec("SELECT 1")
+			require.NoError(t, err)
 		})
 	}
 }
@@ -334,6 +343,157 @@ func TestFlockOnDownloadedCRDB(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestRestartNode(t *testing.T) {
+	ts, err := testserver.NewTestServer(testserver.ThreeNode(), testserver.StoreOnDiskOpt())
+	require.NoError(t, err)
+	defer ts.Stop()
+	for i := 0; i < 3; i++ {
+		require.NoError(t, ts.WaitForNode(i))
+	}
+
+	log.Printf("Stopping Node 2")
+	require.NoError(t, ts.StopNode(2))
+	for i := 0; i < 2; i++ {
+		url := ts.PGURLForNode(i)
+
+		db, err := sql.Open("postgres", url.String())
+		require.NoError(t, err)
+		var out int
+		row := db.QueryRow("SELECT 1")
+		err = row.Scan(&out)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+	}
+
+	require.NoError(t, ts.StartNode(2))
+	require.NoError(t, ts.WaitForNode(2))
+
+	for i := 0; i < 3; i++ {
+		url := ts.PGURLForNode(i)
+		db, err := sql.Open("postgres", url.String())
+		require.NoError(t, err)
+
+		var out int
+		row := db.QueryRow("SELECT 1")
+		err = row.Scan(&out)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+	}
+}
+
+func downloadBinaryTest(filepath string, url string) error {
+	// Get the data
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+func TestUpgradeNode(t *testing.T) {
+	t.Skip("doesn't work on linux")
+	binary21_2 := "cockroach-v21.2.12.darwin-10.9-amd64"
+	binary22_1 := "cockroach-v22.1.0.darwin-10.9-amd64"
+	getMacBinary := func(fileName string) {
+		require.NoError(t, exec.Command("mkdir", "./temp_binaries").Start())
+		require.NoError(t, downloadBinaryTest(fmt.Sprintf("./temp_binaries/%s.tgz", fileName), fmt.Sprintf("https://binaries.cockroachdb.com/%s.tgz", fileName)))
+		tarCmd := exec.Command("tar", "-zxvf", fmt.Sprintf("./temp_binaries/%s.tgz", fileName), "-C", "./temp_binaries")
+		require.NoError(t, tarCmd.Start())
+		require.NoError(t, tarCmd.Wait())
+	}
+
+	defer func() {
+		require.NoError(t, exec.Command("rm", "-rf", "./temp_binaries").Start())
+	}()
+
+	getMacBinary(binary21_2)
+	getMacBinary(binary22_1)
+
+	absFilePath21_2, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", binary21_2))
+	require.NoError(t, err)
+	absFilePath22_1, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", binary22_1))
+	require.NoError(t, err)
+
+	ts, err := testserver.NewTestServer(
+		testserver.ThreeNode(),
+		testserver.CockroachBinaryPathOpt(absFilePath21_2),
+		testserver.UpgradeCockroachBinaryPathOpt(absFilePath22_1),
+		testserver.StoreOnDiskOpt(),
+	)
+	require.NoError(t, err)
+	defer ts.Stop()
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, ts.WaitForNode(i))
+	}
+
+	url := ts.PGURL()
+	db, err := sql.Open("postgres", url.String())
+	require.NoError(t, err)
+
+	var version string
+	row := db.QueryRow("SHOW CLUSTER SETTING version")
+	err = row.Scan(&version)
+	require.NoError(t, err)
+
+	_, err = db.Exec("SET CLUSTER SETTING cluster.preserve_downgrade_option = '21.2';")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, ts.UpgradeNode(i))
+		require.NoError(t, ts.WaitForNode(i))
+	}
+
+	for i := 0; i < 3; i++ {
+		url := ts.PGURLForNode(i)
+
+		db, err = sql.Open("postgres", url.String())
+		require.NoError(t, err)
+
+		var out int
+		row = db.QueryRow("SELECT 1")
+		err = row.Scan(&out)
+		require.NoError(t, err)
+		require.NoError(t, db.Close())
+	}
+
+	db, err = sql.Open("postgres", ts.PGURL().String())
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec("RESET CLUSTER SETTING cluster.preserve_downgrade_option;")
+	require.NoError(t, err)
+
+	updated := false
+	for start := time.Now(); time.Since(start) < 300*time.Second; {
+		row = db.QueryRow("SHOW CLUSTER SETTING version")
+		err = row.Scan(&version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if version == "22.1" {
+			updated = true
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	if !updated {
+		t.Fatal("update to 22.1 did not complete")
 	}
 }
 
