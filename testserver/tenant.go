@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	"log"
 	"net"
 	"net/url"
@@ -26,6 +25,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 func (ts *testServerImpl) isTenant() bool {
@@ -53,7 +54,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if proxy && !ts.serverArgs.secure {
 		return nil, fmt.Errorf("%s: proxy cannot be used with insecure mode", tenantserverMessagePrefix)
 	}
-	cockroachBinary := ts.cmdArgs[0]
+	cockroachBinary := ts.serverArgs.cockroachBinary
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -191,7 +192,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		return nil, err
 	}
 
-	args := []string{
+	args := [][]string{{
 		cockroachBinary,
 		"mt",
 		"start-sql",
@@ -201,7 +202,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		"--kv-addrs=" + pgURL.Host,
 		"--sql-addr=" + sqlAddr,
 		"--http-addr=:0",
-	}
+	}}
 
 	tenant := &testServerImpl{
 		serverArgs: ts.serverArgs,
@@ -209,6 +210,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		state:      stateNew,
 		baseDir:    ts.baseDir,
 		cmdArgs:    args,
+		cmd:        make([]*exec.Cmd, ts.serverArgs.numNodes),
 		stdout:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
 		stderr:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
 		// TODO(asubiotto): Specify listeningURLFile once we support dynamic

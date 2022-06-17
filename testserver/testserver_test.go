@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
+	"github.com/stretchr/testify/require"
 )
 
 const noPW = ""
@@ -177,10 +178,20 @@ func TestRunServer(t *testing.T) {
 				)
 			},
 		},
+		{
+			name: "Insecure 3 Node",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.ThreeNode())
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation(t)
 			defer stop()
+			var out int
+			row := db.QueryRow("SELECT 1")
+			row.Scan(&out)
+			require.Equal(t, out, 1)
 			if _, err := db.Exec("SELECT 1"); err != nil {
 				t.Fatal(err)
 			}
