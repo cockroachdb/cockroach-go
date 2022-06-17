@@ -16,8 +16,8 @@ package crdbpgx
 
 import (
 	"context"
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
 
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/jackc/pgx/v4"
 )
 

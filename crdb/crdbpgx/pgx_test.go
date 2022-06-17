@@ -17,11 +17,12 @@ package crdbpgx
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"testing"
 )
 
 // TestExecuteTx verifies transaction retry using the classic

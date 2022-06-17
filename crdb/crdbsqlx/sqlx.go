@@ -18,10 +18,9 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
 )
 
 // ExecuteTx runs fn inside a transaction and retries it as needed. On
@@ -29,7 +28,9 @@ import (
 // success, the transaction is committed.
 //
 // See crdb.ExecuteTx() for more information.
-func ExecuteTx(ctx context.Context, db *sqlx.DB, opts *sql.TxOptions, fn func(*sqlx.Tx) error) error {
+func ExecuteTx(
+	ctx context.Context, db *sqlx.DB, opts *sql.TxOptions, fn func(*sqlx.Tx) error,
+) error {
 	tx, err := db.BeginTxx(ctx, opts)
 	if err != nil {
 		return err
