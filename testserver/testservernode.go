@@ -23,10 +23,10 @@ import (
 
 func (ts *testServerImpl) StopNode(nodeNum int) error {
 	ts.mu.Lock()
-	ts.nodeStates[nodeNum] = stateStopped
+	ts.nodes[nodeNum].state = stateStopped
 	ts.mu.Unlock()
 	ts.pgURL[nodeNum].u = nil
-	cmd := ts.cmd[nodeNum]
+	cmd := ts.nodes[nodeNum].startCmd
 
 	// Kill the process.
 	if cmd.Process != nil {
@@ -38,13 +38,13 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 
 func (ts *testServerImpl) StartNode(i int) error {
 	ts.mu.RLock()
-	if ts.nodeStates[i] == stateRunning {
+	if ts.nodes[i].state == stateRunning {
 		return fmt.Errorf("node %d already running", i)
 	}
 	ts.mu.RUnlock()
-	ts.cmd[i] = exec.Command(ts.cmdArgs[i][0], ts.cmdArgs[i][1:]...)
+	ts.nodes[i].startCmd = exec.Command(ts.nodes[i].startCmdArgs[0], ts.nodes[i].startCmdArgs[1:]...)
 
-	currCmd := ts.cmd[i]
+	currCmd := ts.nodes[i].startCmd
 	currCmd.Env = []string{
 		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
@@ -80,19 +80,19 @@ func (ts *testServerImpl) StartNode(i int) error {
 	log.Printf("executing: %s", currCmd)
 	err := currCmd.Start()
 	if currCmd.Process != nil {
-		log.Printf("process %d started: %s", currCmd.Process.Pid, strings.Join(ts.cmdArgs[i], " "))
+		log.Printf("process %d started: %s", currCmd.Process.Pid, strings.Join(ts.nodes[i].startCmdArgs, " "))
 	}
 	if err != nil {
 		log.Print(err.Error())
 		ts.mu.Lock()
-		ts.nodeStates[i] = stateFailed
+		ts.nodes[i].state = stateFailed
 		ts.mu.Unlock()
 
 		return fmt.Errorf("command %s failed: %w", currCmd, err)
 	}
 
 	ts.mu.Lock()
-	ts.nodeStates[i] = stateRunning
+	ts.nodes[i].state = stateRunning
 	ts.mu.Unlock()
 
 	capturedI := i
@@ -116,6 +116,6 @@ func (ts *testServerImpl) UpgradeNode(nodeNum int) error {
 	if err != nil {
 		return err
 	}
-	ts.cmdArgs[nodeNum][0] = ts.serverArgs.upgradeCockroachBinary
+	ts.nodes[nodeNum].startCmdArgs[0] = ts.serverArgs.upgradeCockroachBinary
 	return ts.StartNode(nodeNum)
 }

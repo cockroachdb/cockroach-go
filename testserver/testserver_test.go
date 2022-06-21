@@ -185,13 +185,13 @@ func TestRunServer(t *testing.T) {
 		{
 			name: "Insecure 3 Node",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return testserver.NewDBForTest(t, testserver.ThreeNode())
+				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt())
 			},
 		},
 		{
 			name: "Insecure 3 Node On Disk",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return testserver.NewDBForTest(t, testserver.ThreeNode(), testserver.StoreOnDiskOpt())
+				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(), testserver.StoreOnDiskOpt())
 			},
 		},
 	} {
@@ -347,11 +347,11 @@ func TestFlockOnDownloadedCRDB(t *testing.T) {
 }
 
 func TestRestartNode(t *testing.T) {
-	ts, err := testserver.NewTestServer(testserver.ThreeNode(), testserver.StoreOnDiskOpt())
+	ts, err := testserver.NewTestServer(testserver.ThreeNodeOpt(), testserver.StoreOnDiskOpt())
 	require.NoError(t, err)
 	defer ts.Stop()
 	for i := 0; i < 3; i++ {
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	log.Printf("Stopping Node 2")
@@ -369,7 +369,7 @@ func TestRestartNode(t *testing.T) {
 	}
 
 	require.NoError(t, ts.StartNode(2))
-	require.NoError(t, ts.WaitForNode(2))
+	require.NoError(t, ts.WaitForInitFinishForNode(2))
 
 	for i := 0; i < 3; i++ {
 		url := ts.PGURLForNode(i)
@@ -429,7 +429,7 @@ func TestUpgradeNode(t *testing.T) {
 	require.NoError(t, err)
 
 	ts, err := testserver.NewTestServer(
-		testserver.ThreeNode(),
+		testserver.ThreeNodeOpt(),
 		testserver.CockroachBinaryPathOpt(absFilePath21_2),
 		testserver.UpgradeCockroachBinaryPathOpt(absFilePath22_1),
 		testserver.StoreOnDiskOpt(),
@@ -438,7 +438,7 @@ func TestUpgradeNode(t *testing.T) {
 	defer ts.Stop()
 
 	for i := 0; i < 3; i++ {
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	url := ts.PGURL()
@@ -456,7 +456,7 @@ func TestUpgradeNode(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		require.NoError(t, ts.UpgradeNode(i))
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	for i := 0; i < 3; i++ {

@@ -101,10 +101,17 @@ type TestServer interface {
 	// BaseDir returns directory StoreOnDiskOpt writes to if used.
 	BaseDir() string
 
-	WaitForNode(numNode int) error
+	// WaitForInitFinishForNode waits until a node has completed
+	// initialization and is available to connect to and query on.
+	WaitForInitFinishForNode(numNode int) error
+	// StartNode runs the "cockroach start" command for the node.
 	StartNode(i int) error
+	// StopNode kills the node's process.
 	StopNode(i int) error
+	// UpgradeNode stops the node, then starts the node on the with the
+	// binary specified at "upgradeBinaryPath".
 	UpgradeNode(i int) error
+	// PGURLForNode returns the PGUrl for the node.
 	PGURLForNode(nodeNum int) *url.URL
 }
 
@@ -117,24 +124,29 @@ type pgURLChan struct {
 	orig url.URL
 }
 
+// nodeInfo contains the info to start a node and the state of the node.
+type nodeInfo struct {
+	startCmd         *exec.Cmd
+	startCmdArgs     []string
+	listeningURLFile string
+	state            int
+}
+
 // testServerImpl is a TestServer implementation.
 type testServerImpl struct {
-	mu               sync.RWMutex
-	version          *version.Version
-	serverArgs       testServerArgs
-	state            int
-	nodeStates       []int
-	baseDir          string
-	pgURL            []pgURLChan
-	cmd              []*exec.Cmd
-	cmdArgs          [][]string
-	initCmd          *exec.Cmd
-	initCmdArgs      []string
-	stdout           string
-	stderr           string
-	stdoutBuf        logWriter
-	stderrBuf        logWriter
-	listeningURLFile []string
+	mu          sync.RWMutex
+	version     *version.Version
+	serverArgs  testServerArgs
+	serverState int
+	baseDir     string
+	pgURL       []pgURLChan
+	initCmd     *exec.Cmd
+	initCmdArgs []string
+	stdout      string
+	stderr      string
+	stdoutBuf   logWriter
+	stderrBuf   logWriter
+	nodes       []nodeInfo
 
 	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
 	// more information.
@@ -291,7 +303,7 @@ func StopDownloadInMiddleOpt() TestServerOpt {
 	}
 }
 
-func ThreeNode() TestServerOpt {
+func ThreeNodeOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.numNodes = 3
 	}
@@ -376,11 +388,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 
-	listeningURLFile := make([]string, serverArgs.numNodes)
-	for i := 0; i < serverArgs.numNodes; i++ {
-		listeningURLFile[i] = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
-	}
-
 	secureOpt := "--insecure"
 	if serverArgs.secure {
 		// Create certificates.
@@ -436,40 +443,44 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		storeArg = fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
 	}
 
-	args := make([][]string, serverArgs.numNodes)
+	nodes := make([]nodeInfo, serverArgs.numNodes)
 	var initArgs []string
-	if serverArgs.numNodes <= 1 {
-		args[0] = []string{
-			serverArgs.cockroachBinary,
-			startCmd,
-			"--logtostderr",
-			secureOpt,
-			"--host=localhost",
-			"--port=0",
-			"--http-port=" + strconv.Itoa(serverArgs.httpPort),
-			storeArg,
-			"--listening-url-file=" + listeningURLFile[0],
-		}
-	} else {
-		for i := 0; i < serverArgs.numNodes; i++ {
-			args[i] = []string{
+	for i := 0; i < serverArgs.numNodes; i++ {
+		nodes[i].state = stateNew
+		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
+		if serverArgs.numNodes > 1 {
+			nodes[i].startCmdArgs = []string{
 				serverArgs.cockroachBinary,
 				startCmd,
 				secureOpt,
 				storeArg + strconv.Itoa(i),
 				fmt.Sprintf("--listen-addr=localhost:%d", 26257+i),
 				fmt.Sprintf("--http-addr=localhost:%d", 8080+i),
-				"--listening-url-file=" + listeningURLFile[i],
+				"--listening-url-file=" + nodes[i].listeningURLFile,
 				fmt.Sprintf("--join=localhost:%d,localhost:%d,localhost:%d", 26257, 26258, 26259),
 			}
+		} else {
+			nodes[0].startCmdArgs = []string{
+				serverArgs.cockroachBinary,
+				startCmd,
+				"--logtostderr",
+				secureOpt,
+				"--host=localhost",
+				"--port=0",
+				"--http-port=" + strconv.Itoa(serverArgs.httpPort),
+				storeArg,
+				"--listening-url-file=" + nodes[i].listeningURLFile,
+			}
 		}
+	}
 
-		initArgs = []string{
-			serverArgs.cockroachBinary,
-			"init",
-			secureOpt,
-			"--host=localhost:26259",
-		}
+	// We only need initArgs if we're creating a testserver
+	// with multiple nodes.
+	initArgs = []string{
+		serverArgs.cockroachBinary,
+		"init",
+		secureOpt,
+		"--host=localhost:26259",
 	}
 
 	states := make([]int, serverArgs.numNodes)
@@ -478,18 +489,15 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	ts := &testServerImpl{
-		serverArgs:       *serverArgs,
-		version:          v,
-		state:            stateNew,
-		nodeStates:       states,
-		baseDir:          baseDir,
-		cmdArgs:          args,
-		cmd:              make([]*exec.Cmd, serverArgs.numNodes),
-		initCmdArgs:      initArgs,
-		stdout:           filepath.Join(logDir, "cockroach.stdout"),
-		stderr:           filepath.Join(logDir, "cockroach.stderr"),
-		listeningURLFile: listeningURLFile,
-		curTenantID:      firstTenantID,
+		serverArgs:  *serverArgs,
+		version:     v,
+		serverState: stateNew,
+		baseDir:     baseDir,
+		initCmdArgs: initArgs,
+		stdout:      filepath.Join(logDir, "cockroach.stdout"),
+		stderr:      filepath.Join(logDir, "cockroach.stderr"),
+		curTenantID: firstTenantID,
+		nodes:       nodes,
 	}
 	ts.pgURL = make([]pgURLChan, serverArgs.numNodes)
 
@@ -546,7 +554,7 @@ func (ts *testServerImpl) setPGURLForNode(nodeNum int, u *url.URL) {
 	close(ts.pgURL[nodeNum].set)
 }
 
-func (ts *testServerImpl) WaitForNode(nodeNum int) error {
+func (ts *testServerImpl) WaitForInitFinishForNode(nodeNum int) error {
 	db, err := sql.Open("postgres", ts.PGURLForNode(nodeNum).String())
 	defer func() {
 		_ = db.Close()
@@ -558,7 +566,7 @@ func (ts *testServerImpl) WaitForNode(nodeNum int) error {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("%s: WaitForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeNum, err)
+		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeNum, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	return nil
@@ -566,21 +574,21 @@ func (ts *testServerImpl) WaitForNode(nodeNum int) error {
 
 // WaitForInit retries until a connection is successfully established.
 func (ts *testServerImpl) WaitForInit() error {
-	return ts.WaitForNode(0)
+	return ts.WaitForInitFinishForNode(0)
 }
 
 func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
 	var data []byte
 	for {
 		ts.mu.RLock()
-		state := ts.nodeStates[nodeNum]
+		state := ts.nodes[nodeNum].state
 		ts.mu.RUnlock()
 		if state != stateRunning {
 			return fmt.Errorf("server stopped or crashed before listening URL file was available")
 		}
 
 		var err error
-		data, err = ioutil.ReadFile(ts.listeningURLFile[nodeNum])
+		data, err = ioutil.ReadFile(ts.nodes[nodeNum].listeningURLFile)
 		if err == nil {
 			break
 		} else if !os.IsNotExist(err) {
@@ -624,9 +632,9 @@ func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
 // to restart a testserver, but use NewTestServer().
 func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
-	if ts.state != stateNew {
+	if ts.serverState != stateNew {
 		ts.mu.Unlock()
-		switch ts.state {
+		switch ts.serverState {
 		case stateRunning:
 			return nil // No-op if server is already running.
 		case stateStopped, stateFailed:
@@ -636,7 +644,7 @@ func (ts *testServerImpl) Start() error {
 					"Please use NewTestServer()")
 		}
 	}
-	ts.state = stateRunning
+	ts.serverState = stateRunning
 	ts.mu.Unlock()
 
 	for i := 0; i < ts.serverArgs.numNodes; i++ {
@@ -662,10 +670,10 @@ func (ts *testServerImpl) Stop() {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 
-	if ts.state == stateNew {
+	if ts.serverState == stateNew {
 		log.Fatalf("%s: Stop() called, but Start() was never called", testserverMessagePrefix)
 	}
-	if ts.state == stateFailed {
+	if ts.serverState == stateFailed {
 		log.Fatalf("%s: Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
 			testserverMessagePrefix,
 			ts.Stdout(),
@@ -673,7 +681,7 @@ func (ts *testServerImpl) Stop() {
 		return
 	}
 
-	if ts.state != stateStopped {
+	if ts.serverState != stateStopped {
 		if p := ts.proxyProcess; p != nil {
 			_ = p.Kill()
 		}
@@ -686,16 +694,15 @@ func (ts *testServerImpl) Stop() {
 		log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
 	}
 
-	for _, cmd := range ts.cmd {
+	ts.serverState = stateStopped
+	for _, node := range ts.nodes {
+		cmd := node.startCmd
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
-	}
 
-	ts.state = stateStopped
-	for _, nodeState := range ts.nodeStates {
-		if nodeState != stateStopped {
-			ts.state = stateFailed
+		if node.state != stateStopped {
+			ts.serverState = stateFailed
 		}
 	}
 
