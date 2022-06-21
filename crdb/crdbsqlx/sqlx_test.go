@@ -19,11 +19,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
-
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 )
 
 // TestExecuteTx verifies transaction retry using the classic
@@ -94,7 +93,9 @@ func (t sqlxConnSkewTest) GetBalances(ctx context.Context, txi interface{}) (int
 }
 
 // UpdateBalance is part of the crdb.WriteSkewInterface.
-func (t sqlxConnSkewTest) UpdateBalance(ctx context.Context, txi interface{}, acct, delta int) error {
+func (t sqlxConnSkewTest) UpdateBalance(
+	ctx context.Context, txi interface{}, acct, delta int,
+) error {
 	tx := txi.(*sqlx.Tx)
 	_, err := tx.ExecContext(ctx, `UPDATE d.t SET balance=balance+$1 WHERE acct=$2;`, delta, acct)
 	return err

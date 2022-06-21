@@ -14,9 +14,7 @@
 
 package crdb
 
-import (
-	"context"
-)
+import "context"
 
 // Tx abstracts the operations needed by ExecuteInTx so that different
 // frameworks (e.g. go's sql package, pgx, gorm) can be used with ExecuteInTx.
