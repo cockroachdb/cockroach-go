@@ -247,13 +247,13 @@ type tenantInterface interface {
 // process and a SQL tenant process pointed at this TestServer. A sql connection
 // to the tenant and a cleanup function are returned.
 func newTenantDBForTest(
-	t *testing.T,
-	secure bool,
-	proxy bool,
-	pw string,
-	diskStore bool,
-	storeMemSize float64,
-	nonStableDB bool,
+t *testing.T,
+secure bool,
+proxy bool,
+pw string,
+diskStore bool,
+storeMemSize float64,
+nonStableDB bool,
 ) (*sql.DB, func()) {
 	t.Helper()
 	var opts []testserver.TestServerOpt
@@ -351,7 +351,7 @@ func TestRestartNode(t *testing.T) {
 	require.NoError(t, err)
 	defer ts.Stop()
 	for i := 0; i < 3; i++ {
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	log.Printf("Stopping Node 2")
@@ -369,7 +369,7 @@ func TestRestartNode(t *testing.T) {
 	}
 
 	require.NoError(t, ts.StartNode(2))
-	require.NoError(t, ts.WaitForNode(2))
+	require.NoError(t, ts.WaitForInitFinishForNode(2))
 
 	for i := 0; i < 3; i++ {
 		url := ts.PGURLForNode(i)
@@ -438,7 +438,7 @@ func TestUpgradeNode(t *testing.T) {
 	defer ts.Stop()
 
 	for i := 0; i < 3; i++ {
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	url := ts.PGURL()
@@ -456,7 +456,7 @@ func TestUpgradeNode(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		require.NoError(t, ts.UpgradeNode(i))
-		require.NoError(t, ts.WaitForNode(i))
+		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
 	for i := 0; i < 3; i++ {
@@ -503,7 +503,7 @@ var wg = sync.WaitGroup{}
 // two goroutines, the second goroutine waits for the first goroutine to
 // finish downloading the CRDB binary into a local file.
 func testFlockWithDownloadPassing(
-	t *testing.T, opts ...testserver.TestServerOpt,
+t *testing.T, opts ...testserver.TestServerOpt,
 ) (*sql.DB, func()) {
 
 	localFile, err := getLocalFile(false)

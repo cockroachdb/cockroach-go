@@ -58,7 +58,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		if ts.nodeStates[0] != stateRunning {
+		if ts.nodes[0].state != stateRunning {
 			return 0, errors.New("TestServer must be running before NewTenantServer may be called")
 		}
 		if ts.isTenant() {
@@ -192,7 +192,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		return nil, err
 	}
 
-	args := [][]string{{
+	args := []string{
 		cockroachBinary,
 		"mt",
 		"start-sql",
@@ -202,21 +202,26 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		"--kv-addrs=" + pgURL.Host,
 		"--sql-addr=" + sqlAddr,
 		"--http-addr=:0",
-	}}
+	}
+
+	nodes := []nodeInfo{
+		{
+			state:        stateNew,
+			startCmdArgs: args,
+			// TODO(asubiotto): Specify listeningURLFile once we support dynamic
+			//  ports.
+			listeningURLFile: "",
+		},
+	}
 
 	tenant := &testServerImpl{
-		serverArgs: ts.serverArgs,
-		version:    ts.version,
-		state:      stateNew,
-		nodeStates: []int{stateNew},
-		baseDir:    ts.baseDir,
-		cmdArgs:    args,
-		cmd:        make([]*exec.Cmd, ts.serverArgs.numNodes),
-		stdout:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
-		stderr:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
-		// TODO(asubiotto): Specify listeningURLFile once we support dynamic
-		//  ports.
-		listeningURLFile: []string{""},
+		serverArgs:  ts.serverArgs,
+		version:     ts.version,
+		serverState: stateNew,
+		baseDir:     ts.baseDir,
+		stdout:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
+		stderr:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
+		nodes:       nodes,
 	}
 
 	// Start the tenant.
