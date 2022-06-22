@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	"log"
 	"net"
 	"net/url"
@@ -26,6 +25,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 )
 
 func (ts *testServerImpl) isTenant() bool {
@@ -53,11 +54,11 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	if proxy && !ts.serverArgs.secure {
 		return nil, fmt.Errorf("%s: proxy cannot be used with insecure mode", tenantserverMessagePrefix)
 	}
-	cockroachBinary := ts.cmdArgs[0]
+	cockroachBinary := ts.serverArgs.cockroachBinary
 	tenantID, err := func() (int, error) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		if ts.state != stateRunning {
+		if ts.nodes[0].state != stateRunning {
 			return 0, errors.New("TestServer must be running before NewTenantServer may be called")
 		}
 		if ts.isTenant() {
@@ -147,7 +148,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 
 	proxyAddr, err := func() (string, error) {
-		<-ts.pgURL.set
+		<-ts.pgURL[0].set
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -203,25 +204,33 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		"--http-addr=:0",
 	}
 
+	nodes := []nodeInfo{
+		{
+			state:        stateNew,
+			startCmdArgs: args,
+			// TODO(asubiotto): Specify listeningURLFile once we support dynamic
+			//  ports.
+			listeningURLFile: "",
+		},
+	}
+
 	tenant := &testServerImpl{
-		serverArgs: ts.serverArgs,
-		version:    ts.version,
-		state:      stateNew,
-		baseDir:    ts.baseDir,
-		cmdArgs:    args,
-		stdout:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
-		stderr:     filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
-		// TODO(asubiotto): Specify listeningURLFile once we support dynamic
-		//  ports.
-		listeningURLFile: "",
+		serverArgs:  ts.serverArgs,
+		version:     ts.version,
+		serverState: stateNew,
+		baseDir:     ts.baseDir,
+		stdout:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
+		stderr:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
+		nodes:       nodes,
 	}
 
 	// Start the tenant.
 	// Initialize direct connection to the tenant. We need to use `orig` instead of `pgurl` because if the test server
 	// is using a root password, this password does not carry over to the tenant; client certs will, though.
-	tenantURL := ts.pgURL.orig
+	tenantURL := ts.pgURL[0].orig
 	tenantURL.Host = sqlAddr
-	tenant.pgURL.set = make(chan struct{})
+	tenant.pgURL = make([]pgURLChan, 1)
+	tenant.pgURL[0].set = make(chan struct{})
 
 	tenant.setPGURL(&tenantURL)
 	if err := tenant.Start(); err != nil {

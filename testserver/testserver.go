@@ -53,7 +53,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -101,30 +100,53 @@ type TestServer interface {
 	WaitForInit() error
 	// BaseDir returns directory StoreOnDiskOpt writes to if used.
 	BaseDir() string
+
+	// WaitForInitFinishForNode waits until a node has completed
+	// initialization and is available to connect to and query on.
+	WaitForInitFinishForNode(numNode int) error
+	// StartNode runs the "cockroach start" command for the node.
+	StartNode(i int) error
+	// StopNode kills the node's process.
+	StopNode(i int) error
+	// UpgradeNode stops the node, then starts the node on the with the
+	// binary specified at "upgradeBinaryPath".
+	UpgradeNode(i int) error
+	// PGURLForNode returns the PGUrl for the node.
+	PGURLForNode(nodeNum int) *url.URL
+}
+
+type pgURLChan struct {
+	set chan struct{}
+	u   *url.URL
+	// The original URL is preserved here if we are using a custom password.
+	// In that case, the one below uses client certificates, if secure (and
+	// no password otherwise).
+	orig url.URL
+}
+
+// nodeInfo contains the info to start a node and the state of the node.
+type nodeInfo struct {
+	startCmd         *exec.Cmd
+	startCmdArgs     []string
+	listeningURLFile string
+	state            int
 }
 
 // testServerImpl is a TestServer implementation.
 type testServerImpl struct {
-	mu         sync.RWMutex
-	version    *version.Version
-	serverArgs testServerArgs
-	state      int
-	baseDir    string
-	pgURL      struct {
-		set chan struct{}
-		u   *url.URL
-		// The original URL is preserved here if we are using a custom password.
-		// In that case, the one below uses client certificates, if secure (and
-		// no password otherwise).
-		orig url.URL
-	}
-	cmd              *exec.Cmd
-	cmdArgs          []string
-	stdout           string
-	stderr           string
-	stdoutBuf        logWriter
-	stderrBuf        logWriter
-	listeningURLFile string
+	mu          sync.RWMutex
+	version     *version.Version
+	serverArgs  testServerArgs
+	serverState int
+	baseDir     string
+	pgURL       []pgURLChan
+	initCmd     *exec.Cmd
+	initCmdArgs []string
+	stdout      string
+	stderr      string
+	stdoutBuf   logWriter
+	stderrBuf   logWriter
+	nodes       []nodeInfo
 
 	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
 	// more information.
@@ -189,14 +211,16 @@ type TestConfig struct {
 }
 
 type testServerArgs struct {
-	secure          bool
-	rootPW          string  // if nonempty, set as pw for root
-	storeOnDisk     bool    // to save database in disk
-	storeMemSize    float64 // the proportion of available memory allocated to test server
-	httpPort        int
-	testConfig      TestConfig
-	nonStableDB     bool
-	cockroachBinary string // path to cockroach executable file
+	secure                 bool
+	rootPW                 string  // if nonempty, set as pw for root
+	storeOnDisk            bool    // to save database in disk
+	storeMemSize           float64 // the proportion of available memory allocated to test server
+	httpPort               int
+	testConfig             TestConfig
+	nonStableDB            bool
+	cockroachBinary        string // path to cockroach executable file
+	upgradeCockroachBinary string // path to cockroach binary for upgrade
+	numNodes               int
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -206,6 +230,12 @@ type testServerArgs struct {
 func CockroachBinaryPathOpt(executablePath string) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.cockroachBinary = executablePath
+	}
+}
+
+func UpgradeCockroachBinaryPathOpt(executablePath string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.upgradeCockroachBinary = executablePath
 	}
 }
 
@@ -273,6 +303,12 @@ func StopDownloadInMiddleOpt() TestServerOpt {
 	}
 }
 
+func ThreeNodeOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.numNodes = 3
+	}
+}
+
 const (
 	logsDirName  = "logs"
 	certsDirName = "certs"
@@ -287,7 +323,7 @@ var errStoppedInMiddle = errors.New("download stopped in middle")
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
 func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
-	serverArgs := &testServerArgs{}
+	serverArgs := &testServerArgs{numNodes: 1}
 	serverArgs.storeMemSize = defaultStoreMemSize
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
@@ -352,8 +388,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
 	}
 
-	listeningURLFile := filepath.Join(baseDir, "listen-url")
-
 	secureOpt := "--insecure"
 	if serverArgs.secure {
 		// Create certificates.
@@ -396,8 +430,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s failed to parse version: %w", testserverMessagePrefix, err)
 	}
+
 	startCmd := "start-single-node"
-	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) {
+	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) || serverArgs.numNodes > 1 {
 		startCmd = "start"
 	}
 
@@ -408,30 +443,63 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		storeArg = fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
 	}
 
-	args := []string{
+	nodes := make([]nodeInfo, serverArgs.numNodes)
+	var initArgs []string
+	for i := 0; i < serverArgs.numNodes; i++ {
+		nodes[i].state = stateNew
+		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
+		if serverArgs.numNodes > 1 {
+			nodes[i].startCmdArgs = []string{
+				serverArgs.cockroachBinary,
+				startCmd,
+				secureOpt,
+				storeArg + strconv.Itoa(i),
+				fmt.Sprintf("--listen-addr=localhost:%d", 26257+i),
+				fmt.Sprintf("--http-addr=localhost:%d", 8080+i),
+				"--listening-url-file=" + nodes[i].listeningURLFile,
+				fmt.Sprintf("--join=localhost:%d,localhost:%d,localhost:%d", 26257, 26258, 26259),
+			}
+		} else {
+			nodes[0].startCmdArgs = []string{
+				serverArgs.cockroachBinary,
+				startCmd,
+				"--logtostderr",
+				secureOpt,
+				"--host=localhost",
+				"--port=0",
+				"--http-port=" + strconv.Itoa(serverArgs.httpPort),
+				storeArg,
+				"--listening-url-file=" + nodes[i].listeningURLFile,
+			}
+		}
+	}
+
+	// We only need initArgs if we're creating a testserver
+	// with multiple nodes.
+	initArgs = []string{
 		serverArgs.cockroachBinary,
-		startCmd,
-		"--logtostderr",
+		"init",
 		secureOpt,
-		"--host=localhost",
-		"--port=0",
-		"--http-port=" + strconv.Itoa(serverArgs.httpPort),
-		storeArg,
-		"--listening-url-file=" + listeningURLFile,
+		"--host=localhost:26259",
+	}
+
+	states := make([]int, serverArgs.numNodes)
+	for i := 0; i < serverArgs.numNodes; i++ {
+		states[i] = stateNew
 	}
 
 	ts := &testServerImpl{
-		serverArgs:       *serverArgs,
-		version:          v,
-		state:            stateNew,
-		baseDir:          baseDir,
-		cmdArgs:          args,
-		stdout:           filepath.Join(logDir, "cockroach.stdout"),
-		stderr:           filepath.Join(logDir, "cockroach.stderr"),
-		listeningURLFile: listeningURLFile,
-		curTenantID:      firstTenantID,
+		serverArgs:  *serverArgs,
+		version:     v,
+		serverState: stateNew,
+		baseDir:     baseDir,
+		initCmdArgs: initArgs,
+		stdout:      filepath.Join(logDir, "cockroach.stdout"),
+		stderr:      filepath.Join(logDir, "cockroach.stderr"),
+		curTenantID: firstTenantID,
+		nodes:       nodes,
 	}
-	ts.pgURL.set = make(chan struct{})
+	ts.pgURL = make([]pgURLChan, serverArgs.numNodes)
 
 	if err := ts.Start(); err != nil {
 		return nil, fmt.Errorf("%s Start failed: %w", testserverMessagePrefix, err)
@@ -469,45 +537,58 @@ func (ts *testServerImpl) BaseDir() string {
 // It blocks until the network URL is determined and does not timeout,
 // relying instead on test timeouts.
 func (ts *testServerImpl) PGURL() *url.URL {
-	<-ts.pgURL.set
-	return ts.pgURL.u
+	return ts.PGURLForNode(0)
 }
 
 func (ts *testServerImpl) setPGURL(u *url.URL) {
-	ts.pgURL.u = u
-	close(ts.pgURL.set)
+	ts.setPGURLForNode(0, u)
 }
 
-// WaitForInit retries until a connection is successfully established.
-func (ts *testServerImpl) WaitForInit() error {
-	var err error
-	db, err := sql.Open("postgres", ts.PGURL().String())
+func (ts *testServerImpl) PGURLForNode(nodeNum int) *url.URL {
+	<-ts.pgURL[nodeNum].set
+	return ts.pgURL[nodeNum].u
+}
+
+func (ts *testServerImpl) setPGURLForNode(nodeNum int, u *url.URL) {
+	ts.pgURL[nodeNum].u = u
+	close(ts.pgURL[nodeNum].set)
+}
+
+func (ts *testServerImpl) WaitForInitFinishForNode(nodeNum int) error {
+	db, err := sql.Open("postgres", ts.PGURLForNode(nodeNum).String())
+	defer func() {
+		_ = db.Close()
+	}()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	for i := 0; i < 50; i++ {
 		if _, err = db.Query("SHOW DATABASES"); err == nil {
 			return err
 		}
-		log.Printf("%s: WaitForInit: Trying again after error: %v", testserverMessagePrefix, err)
+		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeNum, err)
 		time.Sleep(time.Millisecond * 100)
 	}
-	return err
+	return nil
 }
 
-func (ts *testServerImpl) pollListeningURLFile() error {
+// WaitForInit retries until a connection is successfully established.
+func (ts *testServerImpl) WaitForInit() error {
+	return ts.WaitForInitFinishForNode(0)
+}
+
+func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
 	var data []byte
 	for {
-		ts.mu.Lock()
-		state := ts.state
-		ts.mu.Unlock()
+		ts.mu.RLock()
+		state := ts.nodes[nodeNum].state
+		ts.mu.RUnlock()
 		if state != stateRunning {
 			return fmt.Errorf("server stopped or crashed before listening URL file was available")
 		}
 
 		var err error
-		data, err = ioutil.ReadFile(ts.listeningURLFile)
+		data, err = ioutil.ReadFile(ts.nodes[nodeNum].listeningURLFile)
 		if err == nil {
 			break
 		} else if !os.IsNotExist(err) {
@@ -520,7 +601,7 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse SQL URL: %w", err)
 	}
-	ts.pgURL.orig = *u
+	ts.pgURL[nodeNum].orig = *u
 	if pw := ts.serverArgs.rootPW; pw != "" {
 		db, err := sql.Open("postgres", u.String())
 		if err != nil {
@@ -537,7 +618,8 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 		u.RawQuery = v.Encode()
 		u.User = url.UserPassword("root", pw)
 	}
-	ts.setPGURL(u)
+
+	ts.setPGURLForNode(nodeNum, u)
 
 	return nil
 }
@@ -550,9 +632,9 @@ func (ts *testServerImpl) pollListeningURLFile() error {
 // to restart a testserver, but use NewTestServer().
 func (ts *testServerImpl) Start() error {
 	ts.mu.Lock()
-	if ts.state != stateNew {
+	if ts.serverState != stateNew {
 		ts.mu.Unlock()
-		switch ts.state {
+		switch ts.serverState {
 		case stateRunning:
 			return nil // No-op if server is already running.
 		case stateStopped, stateFailed:
@@ -562,100 +644,20 @@ func (ts *testServerImpl) Start() error {
 					"Please use NewTestServer()")
 		}
 	}
-	ts.state = stateRunning
+	ts.serverState = stateRunning
 	ts.mu.Unlock()
 
-	ts.cmd = exec.Command(ts.cmdArgs[0], ts.cmdArgs[1:]...)
-	ts.cmd.Env = []string{
-		"COCKROACH_MAX_OFFSET=1ns",
-		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
+	for i := 0; i < ts.serverArgs.numNodes; i++ {
+		if err := ts.StartNode(i); err != nil {
+			return err
+		}
 	}
 
-	// Set the working directory of the cockroach process to our temp folder.
-	// This stops cockroach from polluting the project directory with _dump
-	// folders.
-	ts.cmd.Dir = ts.baseDir
-
-	if len(ts.stdout) > 0 {
-		wr, err := newFileLogWriter(ts.stdout)
+	if ts.serverArgs.numNodes > 1 {
+		err := ts.CockroachInit()
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %w", ts.stdout, err)
+			return err
 		}
-		ts.stdoutBuf = wr
-	}
-	ts.cmd.Stdout = ts.stdoutBuf
-
-	if len(ts.stderr) > 0 {
-		wr, err := newFileLogWriter(ts.stderr)
-		if err != nil {
-			return fmt.Errorf("unable to open file %s: %w", ts.stderr, err)
-		}
-		ts.stderrBuf = wr
-	}
-	ts.cmd.Stderr = ts.stderrBuf
-
-	for k, v := range defaultEnv() {
-		ts.cmd.Env = append(ts.cmd.Env, k+"="+v)
-	}
-
-	log.Printf("executing: %s", ts.cmd)
-	err := ts.cmd.Start()
-	if ts.cmd.Process != nil {
-		log.Printf("process %d started: %s", ts.cmd.Process.Pid, strings.Join(ts.cmdArgs, " "))
-	}
-	if err != nil {
-		log.Print(err.Error())
-		if err := ts.stdoutBuf.Close(); err != nil {
-			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, err)
-		}
-		if err := ts.stderrBuf.Close(); err != nil {
-			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, err)
-		}
-
-		ts.mu.Lock()
-		ts.state = stateFailed
-		ts.mu.Unlock()
-
-		return fmt.Errorf("command %s failed: %w", ts.cmd, err)
-	}
-
-	go func() {
-		err := ts.cmd.Wait()
-
-		if closeErr := ts.stdoutBuf.Close(); closeErr != nil {
-			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, closeErr)
-		}
-		if closeErr := ts.stderrBuf.Close(); closeErr != nil {
-			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
-		}
-
-		ps := ts.cmd.ProcessState
-		sy := ps.Sys().(syscall.WaitStatus)
-
-		log.Printf("%s: command %s exited with status %d: %v",
-			testserverMessagePrefix,
-			ts.cmd,
-			sy.ExitStatus(),
-			err)
-		log.Printf("%s process state: %s", testserverMessagePrefix, ps.String())
-
-		ts.mu.Lock()
-		if sy.ExitStatus() == 0 {
-			ts.state = stateStopped
-		} else {
-			ts.state = stateFailed
-		}
-		ts.mu.Unlock()
-	}()
-
-	if ts.pgURL.u == nil {
-		go func() {
-			if err := ts.pollListeningURLFile(); err != nil {
-				log.Printf("%s failed to poll listening URL file: %v", testserverMessagePrefix, err)
-				close(ts.pgURL.set)
-				ts.Stop()
-			}
-		}()
 	}
 
 	return nil
@@ -668,10 +670,10 @@ func (ts *testServerImpl) Stop() {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 
-	if ts.state == stateNew {
+	if ts.serverState == stateNew {
 		log.Fatalf("%s: Stop() called, but Start() was never called", testserverMessagePrefix)
 	}
-	if ts.state == stateFailed {
+	if ts.serverState == stateFailed {
 		log.Fatalf("%s: Stop() called, but process exited unexpectedly. Stdout:\n%s\nStderr:\n%s\n",
 			testserverMessagePrefix,
 			ts.Stdout(),
@@ -679,17 +681,55 @@ func (ts *testServerImpl) Stop() {
 		return
 	}
 
-	if ts.state != stateStopped {
-		// Only call kill if not running. It could have exited properly.
-		_ = ts.cmd.Process.Kill()
-
+	if ts.serverState != stateStopped {
 		if p := ts.proxyProcess; p != nil {
 			_ = p.Kill()
 		}
 	}
 
+	if closeErr := ts.stdoutBuf.Close(); closeErr != nil {
+		log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, closeErr)
+	}
+	if closeErr := ts.stderrBuf.Close(); closeErr != nil {
+		log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
+	}
+
+	ts.serverState = stateStopped
+	for _, node := range ts.nodes {
+		cmd := node.startCmd
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+
+		if node.state != stateStopped {
+			ts.serverState = stateFailed
+		}
+	}
+
 	// Only cleanup on intentional stops.
 	_ = os.RemoveAll(ts.baseDir)
+}
+
+func (ts *testServerImpl) CockroachInit() error {
+	ts.initCmd = exec.Command(ts.initCmdArgs[0], ts.initCmdArgs[1:]...)
+	ts.initCmd.Env = []string{
+		"COCKROACH_MAX_OFFSET=1ns",
+		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
+	}
+
+	// Set the working directory of the cockroach process to our temp folder.
+	// This stops cockroach from polluting the project directory with _dump
+	// folders.
+	ts.initCmd.Dir = ts.baseDir
+
+	err := ts.initCmd.Start()
+	if ts.initCmd.Process != nil {
+		log.Printf("process %d started: %s", ts.initCmd.Process.Pid, strings.Join(ts.initCmdArgs, " "))
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type logWriter interface {
