@@ -46,7 +46,6 @@ func (ts *testServerImpl) StartNode(i int) error {
 
 	currCmd := ts.nodes[i].startCmd
 	currCmd.Env = []string{
-		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
 	}
 
@@ -98,7 +97,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 	capturedI := i
 
 	if ts.pgURL[capturedI].u == nil {
-		ts.pgURL[i].set = make(chan struct{})
+		ts.pgURL[capturedI].set = make(chan struct{})
 		go func() {
 			if err := ts.pollListeningURLFile(capturedI); err != nil {
 				log.Printf("%s failed to poll listening URL file: %v", testserverMessagePrefix, err)
