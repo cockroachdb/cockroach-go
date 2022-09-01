@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -355,8 +356,8 @@ func TestRestartNode(t *testing.T) {
 	}
 
 	log.Printf("Stopping Node 2")
-	require.NoError(t, ts.StopNode(2))
-	for i := 0; i < 2; i++ {
+	require.NoError(t, ts.StopNode(0))
+	for i := 1; i < 3; i++ {
 		url := ts.PGURLForNode(i)
 
 		db, err := sql.Open("postgres", url.String())
@@ -368,8 +369,8 @@ func TestRestartNode(t *testing.T) {
 		require.NoError(t, db.Close())
 	}
 
-	require.NoError(t, ts.StartNode(2))
-	require.NoError(t, ts.WaitForInitFinishForNode(2))
+	require.NoError(t, ts.StartNode(0))
+	require.NoError(t, ts.WaitForInitFinishForNode(0))
 
 	for i := 0; i < 3; i++ {
 		url := ts.PGURLForNode(i)
@@ -382,6 +383,15 @@ func TestRestartNode(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
 	}
+
+	url := ts.PGURLForNode(0)
+	db, err := sql.Open("postgres", url.String())
+	require.NoError(t, err)
+	var out int
+	row := db.QueryRow("SELECT 1")
+	err = row.Scan(&out)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
 }
 
 func downloadBinaryTest(filepath string, url string) error {
@@ -405,12 +415,25 @@ func downloadBinaryTest(filepath string, url string) error {
 }
 
 func TestUpgradeNode(t *testing.T) {
-	t.Skip("doesn't work on linux")
-	binary21_2 := "cockroach-v21.2.12.darwin-10.9-amd64"
-	binary22_1 := "cockroach-v22.1.0.darwin-10.9-amd64"
-	getMacBinary := func(fileName string) {
+	oldVersion := "v21.2.12"
+	newVersion := "v22.1.6"
+
+	var oldVersionBinary, newVersionBinary string
+	switch runtime.GOOS {
+	case "darwin":
+		oldVersionBinary = fmt.Sprintf("cockroach-%s.darwin-10.9-amd64", oldVersion)
+		newVersionBinary = fmt.Sprintf("cockroach-%s.darwin-10.9-amd64", newVersion)
+	case "linux":
+		oldVersionBinary = fmt.Sprintf("cockroach-%s.linux-amd64", oldVersion)
+		newVersionBinary = fmt.Sprintf("cockroach-%s.linux-amd64", newVersion)
+	default:
+		t.Fatalf("unsupported os for test: %s", runtime.GOOS)
+	}
+
+	getBinary := func(fileName string) {
 		require.NoError(t, exec.Command("mkdir", "./temp_binaries").Start())
-		require.NoError(t, downloadBinaryTest(fmt.Sprintf("./temp_binaries/%s.tgz", fileName), fmt.Sprintf("https://binaries.cockroachdb.com/%s.tgz", fileName)))
+		require.NoError(t, downloadBinaryTest(fmt.Sprintf("./temp_binaries/%s.tgz", fileName),
+			fmt.Sprintf("https://binaries.cockroachdb.com/%s.tgz", fileName)))
 		tarCmd := exec.Command("tar", "-zxvf", fmt.Sprintf("./temp_binaries/%s.tgz", fileName), "-C", "./temp_binaries")
 		require.NoError(t, tarCmd.Start())
 		require.NoError(t, tarCmd.Wait())
@@ -420,18 +443,18 @@ func TestUpgradeNode(t *testing.T) {
 		require.NoError(t, exec.Command("rm", "-rf", "./temp_binaries").Start())
 	}()
 
-	getMacBinary(binary21_2)
-	getMacBinary(binary22_1)
+	getBinary(oldVersionBinary)
+	getBinary(newVersionBinary)
 
-	absFilePath21_2, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", binary21_2))
+	absPathOldBinary, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", oldVersionBinary))
 	require.NoError(t, err)
-	absFilePath22_1, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", binary22_1))
+	absPathNewBinary, err := filepath.Abs(fmt.Sprintf("./temp_binaries/%s/cockroach", newVersionBinary))
 	require.NoError(t, err)
 
 	ts, err := testserver.NewTestServer(
 		testserver.ThreeNodeOpt(),
-		testserver.CockroachBinaryPathOpt(absFilePath21_2),
-		testserver.UpgradeCockroachBinaryPathOpt(absFilePath22_1),
+		testserver.CockroachBinaryPathOpt(absPathOldBinary),
+		testserver.UpgradeCockroachBinaryPathOpt(absPathNewBinary),
 		testserver.StoreOnDiskOpt(),
 	)
 	require.NoError(t, err)
@@ -444,6 +467,9 @@ func TestUpgradeNode(t *testing.T) {
 	url := ts.PGURL()
 	db, err := sql.Open("postgres", url.String())
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
 	var version string
 	row := db.QueryRow("SHOW CLUSTER SETTING version")
