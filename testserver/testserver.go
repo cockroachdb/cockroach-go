@@ -556,20 +556,20 @@ func (ts *testServerImpl) setPGURLForNode(nodeNum int, u *url.URL) {
 
 func (ts *testServerImpl) WaitForInitFinishForNode(nodeNum int) error {
 	db, err := sql.Open("postgres", ts.PGURLForNode(nodeNum).String())
-	defer func() {
-		_ = db.Close()
-	}()
 	if err != nil {
 		return err
 	}
-	for i := 0; i < 50; i++ {
-		if _, err = db.Query("SHOW DATABASES"); err == nil {
-			return err
+	defer func() {
+		_ = db.Close()
+	}()
+	for i := 0; i < 100; i++ {
+		if err = db.Ping(); err == nil {
+			return nil
 		}
 		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeNum, err)
 		time.Sleep(time.Millisecond * 100)
 	}
-	return nil
+	return fmt.Errorf("init did not finish for node %d", nodeNum)
 }
 
 // WaitForInit retries until a connection is successfully established.
