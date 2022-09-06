@@ -216,6 +216,7 @@ type testServerArgs struct {
 	storeOnDisk            bool    // to save database in disk
 	storeMemSize           float64 // the proportion of available memory allocated to test server
 	httpPort               int
+	httpPorts              []int
 	listenAddrPorts        []int
 	testConfig             TestConfig
 	nonStableDB            bool
@@ -294,11 +295,19 @@ func ExposeConsoleOpt(port int) TestServerOpt {
 	}
 }
 
-// AddPortOpt is a TestServer option that can be passed to NewTestServer to
+// AddHttpPortOpt is a TestServer option that can be passed to NewTestServer to
+// specify the http ports for the Cockroach nodes.
+func AddHttpPortOpt(port int) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.httpPorts = append(args.httpPorts, port)
+	}
+}
+
+// AddListenAddrPortOpt is a TestServer option that can be passed to NewTestServer to
 // specify the ports for the Cockroach nodes.
 // In the case of restarting nodes, it is up to the user of TestServer to make
 // sure the port used here cannot be re-used.
-func AddPortOpt(port int) TestServerOpt {
+func AddListenAddrPortOpt(port int) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.listenAddrPorts = append(args.listenAddrPorts, port)
 	}
@@ -353,7 +362,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	if serverArgs.numNodes == 3 && len(serverArgs.listenAddrPorts) == 0 {
 		serverArgs.listenAddrPorts = []int{26257, 26258, 26259}
 	} else if serverArgs.numNodes != 1 && len(serverArgs.listenAddrPorts) != serverArgs.numNodes {
-		panic(fmt.Sprintf("need to specify a port for each node using AddPortOpt, got %d nodes, need %d ports",
+		panic(fmt.Sprintf("need to specify a port for each node using AddListenAddrPortOpt, got %d nodes, need %d ports",
 			serverArgs.numNodes, len(serverArgs.listenAddrPorts)))
 	}
 
@@ -474,6 +483,11 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	for i, port := range serverArgs.listenAddrPorts {
 		portArgsStr[i] = fmt.Sprint(port)
 	}
+
+	if len(serverArgs.httpPorts) == 0 {
+		serverArgs.httpPorts = make([]int, serverArgs.numNodes)
+	}
+
 	for i := 0; i < serverArgs.numNodes; i++ {
 		nodes[i].state = stateNew
 		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
@@ -485,7 +499,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				secureOpt,
 				storeArg + strconv.Itoa(i),
 				fmt.Sprintf("--listen-addr=localhost:%d", serverArgs.listenAddrPorts[i]),
-				fmt.Sprintf("--http-addr=localhost:%d", 0),
+				fmt.Sprintf("--http-addr=localhost:%d", serverArgs.httpPorts[i]),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 				joinArg,
 			}
