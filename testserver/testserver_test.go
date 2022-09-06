@@ -187,9 +187,9 @@ func TestRunServer(t *testing.T) {
 			name: "Insecure 3 Node",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(),
-					testserver.AddPortOpt(26257),
-					testserver.AddPortOpt(26258),
-					testserver.AddPortOpt(26259))
+					testserver.AddListenAddrPortOpt(26257),
+					testserver.AddListenAddrPortOpt(26258),
+					testserver.AddListenAddrPortOpt(26259))
 			},
 		},
 		{
@@ -197,9 +197,9 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(),
 					testserver.StoreOnDiskOpt(),
-					testserver.AddPortOpt(26257),
-					testserver.AddPortOpt(26258),
-					testserver.AddPortOpt(26259))
+					testserver.AddListenAddrPortOpt(26257),
+					testserver.AddListenAddrPortOpt(26258),
+					testserver.AddListenAddrPortOpt(26259))
 			},
 		},
 		{
@@ -207,6 +207,17 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(),
 					testserver.StoreOnDiskOpt())
+			},
+		},
+		{
+			name: "Insecure 3 Node With Http Ports",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(),
+					testserver.StoreOnDiskOpt(),
+					testserver.AddHttpPortOpt(8080),
+					testserver.AddHttpPortOpt(8081),
+					testserver.AddHttpPortOpt(8082),
+				)
 			},
 		},
 	} {
@@ -365,9 +376,9 @@ func TestRestartNode(t *testing.T) {
 	ts, err := testserver.NewTestServer(
 		testserver.ThreeNodeOpt(),
 		testserver.StoreOnDiskOpt(),
-		testserver.AddPortOpt(26257),
-		testserver.AddPortOpt(26258),
-		testserver.AddPortOpt(26259))
+		testserver.AddListenAddrPortOpt(26257),
+		testserver.AddListenAddrPortOpt(26258),
+		testserver.AddListenAddrPortOpt(26259))
 	require.NoError(t, err)
 	defer ts.Stop()
 	for i := 0; i < 3; i++ {
@@ -459,9 +470,7 @@ func TestUpgradeNode(t *testing.T) {
 	}
 
 	defer func() {
-		if err := exec.Command("rm", "-rf", "./temp_binaries").Run(); err != nil {
-			t.Log(err)
-		}
+		require.NoError(t, exec.Command("rm", "-rf", "./temp_binaries").Run())
 	}()
 
 	getBinary(oldVersionBinary)
@@ -478,9 +487,9 @@ func TestUpgradeNode(t *testing.T) {
 		testserver.CockroachBinaryPathOpt(absPathOldBinary),
 		testserver.UpgradeCockroachBinaryPathOpt(absPathNewBinary),
 		testserver.StoreOnDiskOpt(),
-		testserver.AddPortOpt(26257),
-		testserver.AddPortOpt(26258),
-		testserver.AddPortOpt(26259),
+		testserver.AddListenAddrPortOpt(26257),
+		testserver.AddListenAddrPortOpt(26258),
+		testserver.AddListenAddrPortOpt(26259),
 	)
 	require.NoError(t, err)
 	defer ts.Stop()
