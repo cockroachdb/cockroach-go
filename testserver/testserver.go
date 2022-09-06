@@ -215,7 +215,7 @@ type testServerArgs struct {
 	rootPW                 string  // if nonempty, set as pw for root
 	storeOnDisk            bool    // to save database in disk
 	storeMemSize           float64 // the proportion of available memory allocated to test server
-	httpPort               int
+	httpPorts              []int
 	testConfig             TestConfig
 	nonStableDB            bool
 	cockroachBinary        string // path to cockroach executable file
@@ -289,7 +289,17 @@ func NonStableDbOpt() TestServerOpt {
 // expose the console of the server on the given port.
 func ExposeConsoleOpt(port int) TestServerOpt {
 	return func(args *testServerArgs) {
-		args.httpPort = port
+		args.httpPorts = []int{port}
+	}
+}
+
+// AddPortOpt is a TestServer option that can be passed to NewTestServer to
+// specify the ports for the Cockroach nodes.
+// In the case of restarting nodes, it is up to the user of TestServer to make
+// sure the port used here cannot be re-used.
+func AddPortOpt(port int) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.httpPorts = append(args.httpPorts, port)
 	}
 }
 
@@ -335,6 +345,14 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.cockroachBinary = *customBinaryFlag
 	} else if customBinaryEnv := os.Getenv("COCKROACH_BINARY"); customBinaryEnv != "" {
 		serverArgs.cockroachBinary = customBinaryEnv
+	}
+
+	if serverArgs.numNodes != 1 && len(serverArgs.httpPorts) != serverArgs.numNodes {
+		panic(fmt.Sprintf("need to specify a port for each node using AddPortOpt, got %d nodes, need %d ports", serverArgs.numNodes, len(serverArgs.httpPorts)))
+	}
+
+	if len(serverArgs.httpPorts) == 0 || len(serverArgs.httpPorts) == 1 {
+		serverArgs.httpPorts = []int{0}
 	}
 
 	var err error
@@ -445,19 +463,25 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	nodes := make([]nodeInfo, serverArgs.numNodes)
 	var initArgs []string
+	portArgsStr := make([]string, 3)
+	hostPort := serverArgs.httpPorts[0]
+	for i, port := range serverArgs.httpPorts {
+		portArgsStr[i] = fmt.Sprint(port)
+	}
 	for i := 0; i < serverArgs.numNodes; i++ {
 		nodes[i].state = stateNew
 		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
 		if serverArgs.numNodes > 1 {
+			joinArg := fmt.Sprintf("--join=localhost:%s", strings.Join(portArgsStr, ",localhost:"))
 			nodes[i].startCmdArgs = []string{
 				serverArgs.cockroachBinary,
 				startCmd,
 				secureOpt,
 				storeArg + strconv.Itoa(i),
-				fmt.Sprintf("--listen-addr=localhost:%d", 26257+i),
-				fmt.Sprintf("--http-addr=localhost:%d", 8080+i),
+				fmt.Sprintf("--listen-addr=localhost:%d", serverArgs.httpPorts[i]),
+				fmt.Sprintf("--http-addr=localhost:%d", 0),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
-				fmt.Sprintf("--join=localhost:%d,localhost:%d,localhost:%d", 26257, 26258, 26259),
+				joinArg,
 			}
 		} else {
 			nodes[0].startCmdArgs = []string{
@@ -467,7 +491,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				secureOpt,
 				"--host=localhost",
 				"--port=0",
-				"--http-port=" + strconv.Itoa(serverArgs.httpPort),
+				"--http-port=" + strconv.Itoa(0),
 				storeArg,
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 			}
@@ -480,7 +504,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.cockroachBinary,
 		"init",
 		secureOpt,
-		"--host=localhost:26259",
+		fmt.Sprintf("--host=localhost:%d", hostPort),
 	}
 
 	states := make([]int, serverArgs.numNodes)
