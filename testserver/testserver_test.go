@@ -252,6 +252,29 @@ func TestCockroachBinaryPathOpt(t *testing.T) {
 	}
 }
 
+func TestCockroachExternalIODirOpt(t *testing.T) {
+	externalDir, err := os.MkdirTemp("/tmp", "cockroach-testserver")
+	require.NoError(t, err)
+	defer func() {
+		err := os.RemoveAll(externalDir)
+		require.NoError(t, err)
+	}()
+
+	db, cleanup := testserver.NewDBForTest(t, testserver.ExternalIODirOpt(externalDir))
+	defer cleanup()
+
+	// test that we can use external dir
+	_, err = db.Exec("BACKUP INTO 'nodelocal://self/backup'")
+	require.NoError(t, err)
+
+	// test that external dir has files
+	f, err := os.Open(externalDir)
+	require.NoError(t, err)
+	defer f.Close()
+	_, err = f.Readdirnames(1)
+	require.NoError(t, err)
+}
+
 func TestPGURLWhitespace(t *testing.T) {
 	ts, err := testserver.NewTestServer()
 	if err != nil {
