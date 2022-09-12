@@ -18,22 +18,23 @@
 // from your PATH.
 //
 // To use, run as follows:
-//   import "github.com/cockroachdb/cockroach-go/v2/testserver"
-//   import "testing"
-//   import "time"
 //
-//   func TestRunServer(t *testing.T) {
-//      ts, err := testserver.NewTestServer()
-//      if err != nil {
-//        t.Fatal(err)
-//      }
-//      defer ts.Stop()
+//	import "github.com/cockroachdb/cockroach-go/v2/testserver"
+//	import "testing"
+//	import "time"
 //
-//      db, err := sql.Open("postgres", ts.PGURL().String())
-//      if err != nil {
-//        t.Fatal(err)
-//      }
-//    }
+//	func TestRunServer(t *testing.T) {
+//	   ts, err := testserver.NewTestServer()
+//	   if err != nil {
+//	     t.Fatal(err)
+//	   }
+//	   defer ts.Stop()
+//
+//	   db, err := sql.Open("postgres", ts.PGURL().String())
+//	   if err != nil {
+//	     t.Fatal(err)
+//	   }
+//	 }
 package testserver
 
 import (
@@ -222,6 +223,7 @@ type testServerArgs struct {
 	cockroachBinary        string // path to cockroach executable file
 	upgradeCockroachBinary string // path to cockroach binary for upgrade
 	numNodes               int
+	externalIODir          string
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -327,6 +329,14 @@ func StopDownloadInMiddleOpt() TestServerOpt {
 func ThreeNodeOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.numNodes = 3
+	}
+}
+
+// ExternalIODirOpt is a TestServer option that can be passed to NewTestServer to
+// specify the external IO directory to be used for the cluster.
+func ExternalIODirOpt(ioDir string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.externalIODir = ioDir
 	}
 }
 
@@ -489,6 +499,10 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.httpPorts = make([]int, serverArgs.numNodes)
 	}
 
+	if serverArgs.externalIODir == "" {
+		serverArgs.externalIODir = "disabled"
+	}
+
 	for i := 0; i < serverArgs.numNodes; i++ {
 		nodes[i].state = stateNew
 		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
@@ -503,6 +517,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				fmt.Sprintf("--http-addr=localhost:%d", serverArgs.httpPorts[i]),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 				joinArg,
+				"--external-io-dir=" + serverArgs.externalIODir,
 			}
 		} else {
 			nodes[0].startCmdArgs = []string{
@@ -515,6 +530,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
 				storeArg,
 				"--listening-url-file=" + nodes[i].listeningURLFile,
+				"--external-io-dir=" + serverArgs.externalIODir,
 			}
 		}
 	}
