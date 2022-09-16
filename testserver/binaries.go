@@ -62,7 +62,7 @@ var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
 // GetDownloadResponse return the http response of a CRDB download.
 // It creates the url for downloading a CRDB binary for current runtime OS,
 // makes a request to this url, and return the response.
-func GetDownloadResponse(nonStable bool) (*http.Response, string, error) {
+func GetDownloadResponse(desiredVersion string, nonStable bool) (*http.Response, string, error) {
 	goos := runtime.GOOS
 	if goos == "linux" {
 		goos += func() string {
@@ -86,9 +86,10 @@ func GetDownloadResponse(nonStable bool) (*http.Response, string, error) {
 	var dbUrl string
 	var err error
 
-	latestStableVersion := ""
-	// For the latest (beta) CRDB, we use the `edge-binaries.cockroachdb.com` host.
-	if nonStable {
+	if desiredVersion != "" {
+		dbUrl = getDownloadUrlForVersion(desiredVersion)
+	} else if nonStable {
+		// For the latest (beta) CRDB, we use the `edge-binaries.cockroachdb.com` host.
 		u := &url.URL{
 			Scheme: "https",
 			Host:   "edge-binaries.cockroachdb.com",
@@ -97,7 +98,7 @@ func GetDownloadResponse(nonStable bool) (*http.Response, string, error) {
 		dbUrl = u.String()
 	} else {
 		// For the latest stable CRDB, we use the url provided in the CRDB release page.
-		dbUrl, latestStableVersion, err = getLatestStableVersionInfo()
+		dbUrl, desiredVersion, err = getLatestStableVersionInfo()
 		if err != nil {
 			return nil, "", err
 		}
@@ -113,22 +114,22 @@ func GetDownloadResponse(nonStable bool) (*http.Response, string, error) {
 		return nil, "", fmt.Errorf("error downloading %s: %d (%s)", dbUrl,
 			response.StatusCode, response.Status)
 	}
-	return response, latestStableVersion, nil
+	return response, desiredVersion, nil
 }
 
 // downloadBinary saves the latest version of CRDB into a local binary file,
 // and returns the path for this local binary.
 // To download the latest STABLE version of CRDB, set `nonStable` to false.
 // To download the bleeding edge version of CRDB, set `nonStable` to true.
-func downloadBinary(tc *TestConfig, nonStable bool) (string, error) {
-	response, latestStableVersion, err := GetDownloadResponse(nonStable)
+func downloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (string, error) {
+	response, desiredVersion, err := GetDownloadResponse(desiredVersion, nonStable)
 	if err != nil {
 		return "", err
 	}
 
 	defer func() { _ = response.Body.Close() }()
 
-	filename, err := GetDownloadFilename(response, nonStable, latestStableVersion)
+	filename, err := GetDownloadFilename(response, nonStable, desiredVersion)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +227,7 @@ func downloadBinary(tc *TestConfig, nonStable bool) (string, error) {
 
 // GetDownloadFilename returns the local filename of the downloaded CRDB binary file.
 func GetDownloadFilename(
-	response *http.Response, nonStableDB bool, latestStableVersion string,
+	response *http.Response, nonStableDB bool, desiredVersion string,
 ) (string, error) {
 	if nonStableDB {
 		const contentDisposition = "Content-Disposition"
@@ -240,7 +241,7 @@ func GetDownloadFilename(
 		}
 		return filename, nil
 	}
-	filename := fmt.Sprintf("cockroach-%s", latestStableVersion)
+	filename := fmt.Sprintf("cockroach-%s", desiredVersion)
 	if runtime.GOOS == "windows" {
 		filename += ".exe"
 	}
@@ -264,17 +265,24 @@ func getLatestStableVersionInfo() (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("api/updates response is of wrong format")
 	}
-	var downloadUrl string
-	switch runtime.GOOS {
-	case "linux":
-		downloadUrl = fmt.Sprintf(linuxUrlpat, latestStableVersion)
-	case "darwin":
-		downloadUrl = fmt.Sprintf(macUrlpat, latestStableVersion)
-	case "windows":
-		downloadUrl = fmt.Sprintf(winUrlpat, latestStableVersion)
-	}
+
+	downloadUrl := getDownloadUrlForVersion(latestStableVersion)
+
 	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion, ".", "-")
 	return downloadUrl, latestStableVerFormatted, nil
+}
+
+func getDownloadUrlForVersion(version string) string {
+	switch runtime.GOOS {
+	case "linux":
+		return fmt.Sprintf(linuxUrlpat, version)
+	case "darwin":
+		return fmt.Sprintf(macUrlpat, version)
+	case "windows":
+		return fmt.Sprintf(winUrlpat, version)
+	}
+
+	panic(errors.New("could not get supported go os version"))
 }
 
 // downloadBinaryFromResponse copies the http response's body directly into a local binary.
