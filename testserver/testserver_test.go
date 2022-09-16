@@ -121,6 +121,12 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t, testserver.NonStableDbOpt()) },
 		},
 		{
+			name: "InsecureCustomVersion",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.CustomVersionOpt("21.2.15"))
+			},
+		},
+		{
 			name: "InsecureWithCustomizedMemSizeNonStable",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.SetStoreMemSizeOpt(0.3), testserver.NonStableDbOpt())
@@ -646,7 +652,7 @@ func testFlockWithDownloadKilled(t *testing.T) (*sql.DB, func()) {
 
 // getLocalFile returns the to-be-downloaded CRDB binary's local path.
 func getLocalFile(nonStable bool) (string, error) {
-	response, latestStableVersion, err := testserver.GetDownloadResponse(nonStable)
+	response, latestStableVersion, err := testserver.GetDownloadResponse("", nonStable)
 	if err != nil {
 		return "", err
 	}

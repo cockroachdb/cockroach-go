@@ -220,6 +220,7 @@ type testServerArgs struct {
 	listenAddrPorts        []int
 	testConfig             TestConfig
 	nonStableDB            bool
+	customVersion          string // custom cockroach version to use
 	cockroachBinary        string // path to cockroach executable file
 	upgradeCockroachBinary string // path to cockroach binary for upgrade
 	numNodes               int
@@ -285,6 +286,14 @@ func RootPasswordOpt(pw string) TestServerOpt {
 func NonStableDbOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.nonStableDB = true
+	}
+}
+
+// CustomVersionOpt is a TestServer option that can be passed to NewTestServer to
+// download the a specific version of CRDB.
+func CustomVersionOpt(version string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.customVersion = version
 	}
 }
 
@@ -390,7 +399,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			serverArgs.cockroachBinary = cockroachBinary
 		}
 	} else {
-		serverArgs.cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.nonStableDB)
+		serverArgs.cockroachBinary, err = downloadBinary(&serverArgs.testConfig, serverArgs.customVersion, serverArgs.nonStableDB)
 		if err != nil {
 			if errors.Is(err, errStoppedInMiddle) {
 				// If the testserver is intentionally killed in the middle of downloading,
