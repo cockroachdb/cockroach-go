@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	http "net/http"
 	"os"
 	"os/exec"
@@ -401,20 +402,102 @@ func TestFlockOnDownloadedCRDB(t *testing.T) {
 	}
 }
 
-func TestRestartNode(t *testing.T) {
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err != nil {
+		return 0, err
+	}
+
+	err = l.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	return port, err
+}
+
+func TestRestartNodeParallel(t *testing.T) {
+	require.NoError(t, os.Mkdir("./temp_binaries", 0755))
+	defer func() {
+		require.NoError(t, os.RemoveAll("./temp_binaries"))
+	}()
+	var fileName string
+	switch runtime.GOOS {
+	case "darwin":
+		fileName = fmt.Sprintf("cockroach-%s.darwin-10.9-amd64", "v22.1.6")
+		require.NoError(t, downloadBinaryTest(
+			fmt.Sprintf("./temp_binaries/%s.tgz", fileName),
+			fmt.Sprintf("https://binaries.cockroachdb.com/%s.tgz", fileName)))
+	case "linux":
+		fileName = fmt.Sprintf("cockroach-%s.linux-amd64", "v22.1.6")
+		require.NoError(t, downloadBinaryTest(
+			fmt.Sprintf("./temp_binaries/%s.tgz", fileName),
+			fmt.Sprintf("https://binaries.cockroachdb.com/%s.tgz", fileName)))
+	default:
+		t.Fatalf("unsupported os for test: %s", runtime.GOOS)
+	}
+
+	tarCmd := exec.Command("tar", "-zxvf", fmt.Sprintf("./temp_binaries/%s.tgz", fileName), "-C", "./temp_binaries")
+	require.NoError(t, tarCmd.Start())
+	require.NoError(t, tarCmd.Wait())
+
+	mu := sync.Mutex{}
+	usedPorts := make(map[int]struct{})
+	const ParallelExecs = 5
+	var wg sync.WaitGroup
+	wg.Add(ParallelExecs)
+	for i := 0; i < ParallelExecs; i++ {
+		go func() {
+			ports := make([]int, 3)
+			for j := 0; j < 3; j++ {
+				for {
+					port, err := getFreePort()
+					require.NoError(t, err)
+					mu.Lock()
+					_, found := usedPorts[port]
+					if !found {
+						usedPorts[port] = struct{}{}
+					}
+					ports[j] = port
+					mu.Unlock()
+					if !found {
+						break
+					}
+				}
+			}
+			testRestartNode(t, ports, "temp_binaries/"+fileName+"/cockroach")
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func testRestartNode(t *testing.T, ports []int, binaryPath string) {
+	const pollListenURLTimeout = 150
 	ts, err := testserver.NewTestServer(
 		testserver.ThreeNodeOpt(),
 		testserver.StoreOnDiskOpt(),
-		testserver.AddListenAddrPortOpt(26257),
-		testserver.AddListenAddrPortOpt(26258),
-		testserver.AddListenAddrPortOpt(26259))
+		testserver.AddListenAddrPortOpt(ports[0]),
+		testserver.AddListenAddrPortOpt(ports[1]),
+		testserver.AddListenAddrPortOpt(ports[2]),
+		testserver.CockroachBinaryPathOpt(binaryPath),
+		testserver.PollListenURLTimeoutOpt(pollListenURLTimeout))
 	require.NoError(t, err)
 	defer ts.Stop()
 	for i := 0; i < 3; i++ {
 		require.NoError(t, ts.WaitForInitFinishForNode(i))
 	}
 
-	log.Printf("Stopping Node 2")
+	log.Printf("Stopping Node 0")
 	require.NoError(t, ts.StopNode(0))
 	for i := 1; i < 3; i++ {
 		url := ts.PGURLForNode(i)
