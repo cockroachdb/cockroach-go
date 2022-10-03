@@ -25,7 +25,6 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 	ts.mu.Lock()
 	ts.nodes[nodeNum].state = stateStopped
 	ts.mu.Unlock()
-	ts.pgURL[nodeNum].u = nil
 	cmd := ts.nodes[nodeNum].startCmd
 
 	// Kill the process.
