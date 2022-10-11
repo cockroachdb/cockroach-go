@@ -80,6 +80,9 @@ const (
 // By default, we allocate 20% of available memory to the test server.
 const defaultStoreMemSize = 0.2
 
+const defaultInitTimeout = 60
+const defaultPollListenURLTimeout = 60
+
 const testserverMessagePrefix = "cockroach-go testserver"
 const tenantserverMessagePrefix = "cockroach-go tenantserver"
 
@@ -212,19 +215,21 @@ type TestConfig struct {
 }
 
 type testServerArgs struct {
-	secure                 bool
-	rootPW                 string  // if nonempty, set as pw for root
-	storeOnDisk            bool    // to save database in disk
-	storeMemSize           float64 // the proportion of available memory allocated to test server
-	httpPorts              []int
-	listenAddrPorts        []int
-	testConfig             TestConfig
-	nonStableDB            bool
-	customVersion          string // custom cockroach version to use
-	cockroachBinary        string // path to cockroach executable file
-	upgradeCockroachBinary string // path to cockroach binary for upgrade
-	numNodes               int
-	externalIODir          string
+	secure                      bool
+	rootPW                      string  // if nonempty, set as pw for root
+	storeOnDisk                 bool    // to save database in disk
+	storeMemSize                float64 // the proportion of available memory allocated to test server
+	httpPorts                   []int
+	listenAddrPorts             []int
+	testConfig                  TestConfig
+	nonStableDB                 bool
+	customVersion               string // custom cockroach version to use
+	cockroachBinary             string // path to cockroach executable file
+	upgradeCockroachBinary      string // path to cockroach binary for upgrade
+	numNodes                    int
+	externalIODir               string
+	initTimeoutSeconds          int
+	pollListenURLTimeoutSeconds int
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -349,6 +354,18 @@ func ExternalIODirOpt(ioDir string) TestServerOpt {
 	}
 }
 
+func InitTimeoutOpt(timeout int) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.initTimeoutSeconds = timeout
+	}
+}
+
+func PollListenURLTimeoutOpt(timeout int) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.pollListenURLTimeoutSeconds = timeout
+	}
+}
+
 const (
 	logsDirName  = "logs"
 	certsDirName = "certs"
@@ -365,6 +382,8 @@ var errStoppedInMiddle = errors.New("download stopped in middle")
 func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	serverArgs := &testServerArgs{numNodes: 1}
 	serverArgs.storeMemSize = defaultStoreMemSize
+	serverArgs.initTimeoutSeconds = defaultInitTimeout
+	serverArgs.pollListenURLTimeoutSeconds = defaultPollListenURLTimeout
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
 	}
@@ -632,7 +651,7 @@ func (ts *testServerImpl) WaitForInitFinishForNode(nodeNum int) error {
 	defer func() {
 		_ = db.Close()
 	}()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < ts.serverArgs.initTimeoutSeconds*10; i++ {
 		if err = db.Ping(); err == nil {
 			return nil
 		}
@@ -649,22 +668,27 @@ func (ts *testServerImpl) WaitForInit() error {
 
 func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
 	var data []byte
-	for {
+	for i := 0; i < ts.serverArgs.pollListenURLTimeoutSeconds*10; i++ {
 		ts.mu.RLock()
 		state := ts.nodes[nodeNum].state
 		ts.mu.RUnlock()
 		if state != stateRunning {
 			return fmt.Errorf("server stopped or crashed before listening URL file was available")
 		}
-
 		var err error
 		data, err = ioutil.ReadFile(ts.nodes[nodeNum].listeningURLFile)
-		if err == nil {
+		if len(data) == 0 {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		} else if err == nil {
 			break
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("unexpected error while reading listening URL file: %w", err)
 		}
-		time.Sleep(100 * time.Millisecond)
+	}
+
+	if len(data) == 0 {
+		panic("empty connection string")
 	}
 
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
@@ -765,15 +789,33 @@ func (ts *testServerImpl) Stop() {
 	}
 
 	ts.serverState = stateStopped
-	for _, node := range ts.nodes {
+	for i, node := range ts.nodes {
 		cmd := node.startCmd
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 
+		if node.state != stateFailed {
+			node.state = stateStopped
+		}
+
 		if node.state != stateStopped {
 			ts.serverState = stateFailed
 		}
+
+		// RUnlock such that StopNode can Lock and Unlock.
+		ts.mu.RUnlock()
+		err := ts.StopNode(i)
+		if err != nil {
+			log.Printf("error stopping node %d: %s", i, err)
+		}
+		ts.mu.RLock()
+
+		nodeDir := fmt.Sprintf("%s%d", ts.baseDir, i)
+		if err := os.RemoveAll(nodeDir); err != nil {
+			log.Printf("error deleting tmp directory %s for node: %s", nodeDir, err)
+		}
+
 	}
 
 	// Only cleanup on intentional stops.
