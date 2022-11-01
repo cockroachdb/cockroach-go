@@ -20,8 +20,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // Version represents a semantic version; see
@@ -92,7 +90,7 @@ var numericRE = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 // dots.
 func Parse(str string) (*Version, error) {
 	if !versionRE.MatchString(str) {
-		return nil, errors.Errorf("invalid version string '%s'", str)
+		return nil, fmt.Errorf("invalid version string '%s'", str)
 	}
 
 	var v Version
