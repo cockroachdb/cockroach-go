@@ -47,6 +47,8 @@ func (ts *testServerImpl) StartNode(i int) error {
 	currCmd.Env = []string{
 		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
+		"COCKROACH_FORCE_DEV_VERSION=true",
+		"COCKROACH_UPGRADE_TO_DEV_VERSION=true",
 	}
 
 	// Set the working directory of the cockroach process to our temp folder.
@@ -55,7 +57,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 	currCmd.Dir = ts.baseDir
 
 	if len(ts.stdout) > 0 {
-		wr, err := newFileLogWriter(ts.stdout)
+		wr, err := newFileLogWriter(fmt.Sprintf("%s.%d", ts.stdout, i))
 		if err != nil {
 			return fmt.Errorf("unable to open file %s: %w", ts.stdout, err)
 		}
@@ -64,7 +66,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 	currCmd.Stdout = ts.stdoutBuf
 
 	if len(ts.stderr) > 0 {
-		wr, err := newFileLogWriter(ts.stderr)
+		wr, err := newFileLogWriter(fmt.Sprintf("%s.%d", ts.stderr, i))
 		if err != nil {
 			return fmt.Errorf("unable to open file %s: %w", ts.stderr, err)
 		}

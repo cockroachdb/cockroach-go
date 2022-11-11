@@ -857,7 +857,7 @@ type fileLogWriter struct {
 }
 
 func newFileLogWriter(file string) (*fileLogWriter, error) {
-	f, err := os.Create(file)
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err
 	}
