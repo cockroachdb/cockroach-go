@@ -48,6 +48,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
 	}
+	currCmd.Env = append(currCmd.Env, ts.serverArgs.envVars...)
 
 	// Set the working directory of the cockroach process to our temp folder.
 	// This stops cockroach from polluting the project directory with _dump

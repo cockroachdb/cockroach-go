@@ -230,6 +230,7 @@ type testServerArgs struct {
 	externalIODir               string
 	initTimeoutSeconds          int
 	pollListenURLTimeoutSeconds int
+	envVars                     []string // to be passed to cmd.Env
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -363,6 +364,14 @@ func InitTimeoutOpt(timeout int) TestServerOpt {
 func PollListenURLTimeoutOpt(timeout int) TestServerOpt {
 	return func(args *testServerArgs) {
 		args.pollListenURLTimeoutSeconds = timeout
+	}
+}
+
+// EnvVarOpt is a list of environment variables to be passed to the start
+// command. Each entry in the slice should be in `key=value` format.
+func EnvVarOpt(vars []string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.envVars = vars
 	}
 }
 
