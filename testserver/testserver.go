@@ -405,7 +405,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			serverArgs.numNodes, len(serverArgs.listenAddrPorts)))
 	}
 
-	if len(serverArgs.listenAddrPorts) == 0 || len(serverArgs.listenAddrPorts) == 1 {
+	if len(serverArgs.listenAddrPorts) == 0 {
 		serverArgs.listenAddrPorts = []int{0}
 	}
 
@@ -554,7 +554,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				"--logtostderr",
 				secureOpt,
 				"--host=localhost",
-				"--port=0",
+				"--port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
 				"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
 				storeArg,
 				"--listening-url-file=" + nodes[i].listeningURLFile,
