@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -291,6 +292,30 @@ func TestPGURLWhitespace(t *testing.T) {
 	if trimmed := strings.TrimSpace(url); url != trimmed {
 		t.Errorf("unexpected whitespace in server URL: %q", url)
 	}
+}
+
+func TestSingleNodePort(t *testing.T) {
+	port, err := getFreePort()
+	require.NoError(t, err)
+
+	ts, err := testserver.NewTestServer(testserver.AddListenAddrPortOpt(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.Stop()
+
+	// check that port overriding worked
+	url := ts.PGURL()
+	require.Equal(t, strconv.Itoa(port), url.Port())
+
+	db, err := sql.Open("postgres", url.String())
+	require.NoError(t, err)
+
+	// check that connection was successful
+	var out int
+	row := db.QueryRow("SELECT 1")
+	require.NoError(t, row.Scan(&out))
+	require.Equal(t, 1, out)
 }
 
 // tenantInterface is defined in order to use tenant-related methods on the
