@@ -652,22 +652,30 @@ func (ts *testServerImpl) setPGURLForNode(nodeNum int, u *url.URL) {
 	close(ts.pgURL[nodeNum].set)
 }
 
-func (ts *testServerImpl) WaitForInitFinishForNode(nodeNum int) error {
-	db, err := sql.Open("postgres", ts.PGURLForNode(nodeNum).String())
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = db.Close()
-	}()
+func (ts *testServerImpl) WaitForInitFinishForNode(nodeIdx int) error {
 	for i := 0; i < ts.serverArgs.initTimeoutSeconds*10; i++ {
-		if err = db.Ping(); err == nil {
+		err := func() error {
+			db, err := sql.Open("postgres", ts.PGURLForNode(nodeIdx).String())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = db.Close() }()
+			var s string
+			if err := db.QueryRow("SELECT 'started'").Scan(&s); err != nil {
+				return err
+			}
+			if s != "started" {
+				return fmt.Errorf("healthcheck query had incorrect result")
+			}
+			return nil
+		}()
+		if err == nil {
 			return nil
 		}
-		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeNum, err)
+		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeIdx, err)
 		time.Sleep(time.Millisecond * 100)
 	}
-	return fmt.Errorf("init did not finish for node %d", nodeNum)
+	return fmt.Errorf("init did not finish for node %d", nodeIdx)
 }
 
 // WaitForInit retries until a connection is successfully established.
