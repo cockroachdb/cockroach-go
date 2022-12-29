@@ -93,10 +93,14 @@ type TestServer interface {
 	// Stop stops the server and cleans up any associated resources.
 	Stop()
 
-	// Stdout returns the entire contents of the process' stdout.
+	// Stdout returns the entire contents of the first node's stdout.
 	Stdout() string
-	// Stdout returns the entire contents of the process' stderr.
+	// Stdout returns the entire contents of the first node's stderr.
 	Stderr() string
+	// StdoutForNode returns the entire contents of the node's stdout.
+	StdoutForNode(i int) string
+	// StderrForNode returns the entire contents of the node's stderr.
+	StderrForNode(i int) string
 	// PGURL returns the postgres connection URL to this server.
 	PGURL() *url.URL
 	// WaitForInit retries until a SQL connection is successfully established to
@@ -134,6 +138,10 @@ type nodeInfo struct {
 	startCmdArgs     []string
 	listeningURLFile string
 	state            int
+	stdout           string
+	stderr           string
+	stdoutBuf        logWriter
+	stderrBuf        logWriter
 }
 
 // testServerImpl is a TestServer implementation.
@@ -146,10 +154,6 @@ type testServerImpl struct {
 	pgURL       []pgURLChan
 	initCmd     *exec.Cmd
 	initCmdArgs []string
-	stdout      string
-	stderr      string
-	stdoutBuf   logWriter
-	stderrBuf   logWriter
 	nodes       []nodeInfo
 
 	// curTenantID is used to allocate tenant IDs. Refer to NewTenantServer for
@@ -457,13 +461,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		}
 		return path, nil
 	}
-	// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
-	// Should be done once issue #109 is solved:
-	// https://github.com/cockroachdb/cockroach-go/issues/109
-	logDir, err := mkDir(logsDirName)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
-	}
 	certsDir, err := mkDir(certsDirName)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", testserverMessagePrefix, err)
@@ -517,13 +514,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		startCmd = "start"
 	}
 
-	var storeArg string
-	if serverArgs.storeOnDisk {
-		storeArg = "--store=path=" + baseDir
-	} else {
-		storeArg = fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
-	}
-
 	nodes := make([]nodeInfo, serverArgs.numNodes)
 	var initArgs []string
 	joinAddrs := make([]string, 3)
@@ -541,15 +531,25 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	for i := 0; i < serverArgs.numNodes; i++ {
+		storeArg := fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
+		nodeBaseDir := filepath.Join(baseDir, strconv.Itoa(i))
+		if serverArgs.storeOnDisk {
+			storeArg = fmt.Sprintf("--store=path=%s", nodeBaseDir)
+		}
+		// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
+		// Should be done once issue #109 is solved:
+		// https://github.com/cockroachdb/cockroach-go/issues/109
+		nodes[i].stdout = filepath.Join(nodeBaseDir, "cockroach.stdout")
+		nodes[i].stderr = filepath.Join(nodeBaseDir, "cockroach.stderr")
+		nodes[i].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
 		nodes[i].state = stateNew
-		nodes[i].listeningURLFile = filepath.Join(baseDir, fmt.Sprintf("listen-url%d", i))
 		if serverArgs.numNodes > 1 {
 			joinArg := fmt.Sprintf("--join=%s", strings.Join(joinAddrs, ","))
 			nodes[i].startCmdArgs = []string{
 				serverArgs.cockroachBinary,
 				startCmd,
 				secureOpt,
-				storeArg + strconv.Itoa(i),
+				storeArg,
 				fmt.Sprintf("--listen-addr=localhost:%d", serverArgs.listenAddrPorts[i]),
 				fmt.Sprintf("--http-addr=localhost:%d", serverArgs.httpPorts[i]),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
@@ -592,8 +592,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverState: stateNew,
 		baseDir:     baseDir,
 		initCmdArgs: initArgs,
-		stdout:      filepath.Join(logDir, "cockroach.stdout"),
-		stderr:      filepath.Join(logDir, "cockroach.stderr"),
 		curTenantID: firstTenantID,
 		nodes:       nodes,
 	}
@@ -614,14 +612,24 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	return ts, nil
 }
 
-// Stdout returns the entire contents of the process' stdout.
+// Stdout returns the entire contents of the first node stdout.
 func (ts *testServerImpl) Stdout() string {
-	return ts.stdoutBuf.String()
+	return ts.StdoutForNode(0)
 }
 
-// Stderr returns the entire contents of the process' stderr.
+// Stderr returns the entire contents of the first node stderr.
 func (ts *testServerImpl) Stderr() string {
-	return ts.stderrBuf.String()
+	return ts.StderrForNode(0)
+}
+
+// StdoutForNode returns the entire contents of the node's stdout.
+func (ts *testServerImpl) StdoutForNode(i int) string {
+	return ts.nodes[i].stdoutBuf.String()
+}
+
+// StderrForNode returns the entire contents of the node's stderr.
+func (ts *testServerImpl) StderrForNode(i int) string {
+	return ts.nodes[i].stderrBuf.String()
 }
 
 // BaseDir returns directory StoreOnDiskOpt writes to if used.
@@ -675,6 +683,12 @@ func (ts *testServerImpl) WaitForInitFinishForNode(nodeIdx int) error {
 		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeIdx, err)
 		time.Sleep(time.Millisecond * 100)
 	}
+	log.Printf(
+		"init did not finish for node %d\n\nstdout:\n%s\n\nstderr:\n:%s",
+		nodeIdx,
+		ts.StdoutForNode(nodeIdx),
+		ts.StderrForNode(nodeIdx),
+	)
 	return fmt.Errorf("init did not finish for node %d", nodeIdx)
 }
 
@@ -798,13 +812,6 @@ func (ts *testServerImpl) Stop() {
 		}
 	}
 
-	if closeErr := ts.stdoutBuf.Close(); closeErr != nil {
-		log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, closeErr)
-	}
-	if closeErr := ts.stderrBuf.Close(); closeErr != nil {
-		log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
-	}
-
 	ts.serverState = stateStopped
 	for i, node := range ts.nodes {
 		cmd := node.startCmd
@@ -828,11 +835,16 @@ func (ts *testServerImpl) Stop() {
 		}
 		ts.mu.RLock()
 
-		nodeDir := fmt.Sprintf("%s%d", ts.baseDir, i)
+		nodeDir := filepath.Join(ts.baseDir, strconv.Itoa(i))
 		if err := os.RemoveAll(nodeDir); err != nil {
 			log.Printf("error deleting tmp directory %s for node: %s", nodeDir, err)
 		}
-
+		if closeErr := ts.nodes[i].stdoutBuf.Close(); closeErr != nil {
+			log.Printf("%s: failed to close stdout: %v", testserverMessagePrefix, closeErr)
+		}
+		if closeErr := ts.nodes[i].stderrBuf.Close(); closeErr != nil {
+			log.Printf("%s: failed to close stderr: %v", testserverMessagePrefix, closeErr)
+		}
 	}
 
 	// Only cleanup on intentional stops.
@@ -874,7 +886,11 @@ type fileLogWriter struct {
 }
 
 func newFileLogWriter(file string) (*fileLogWriter, error) {
-	f, err := os.Create(file)
+	if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+		return nil, err
+	}
+	// If the file doesn't exist, create it, else append to the file.
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
 	}
