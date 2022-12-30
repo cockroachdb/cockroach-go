@@ -15,6 +15,7 @@ jobs:
         go:
           - "1.17"
           - "1.18"
+          - "1.19"
     steps:
     - uses: actions/checkout@v2
 
@@ -25,7 +26,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        go install github.com/cockroachdb/crlfmt@latest
+        go install github.com/cockroachdb/crlfmt@024b567ce87bf2b89f2cffabb7a8f4ea0cfa8b98
         go install github.com/kisielk/errcheck@latest
         go install github.com/mdempsky/unconvert@latest
         go install honnef.co/go/tools/cmd/staticcheck@latest
