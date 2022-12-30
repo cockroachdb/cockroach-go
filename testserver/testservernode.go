@@ -29,7 +29,12 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 
 	// Kill the process.
 	if cmd.Process != nil {
-		return cmd.Process.Kill()
+		if err := cmd.Process.Kill(); err != nil {
+			return err
+		}
+		if _, err := cmd.Process.Wait(); err != nil {
+			return err
+		}
 	}
 
 	return nil
