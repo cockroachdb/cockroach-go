@@ -25,7 +25,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -234,16 +233,7 @@ func GetDownloadFilename(
 	response *http.Response, nonStableDB bool, desiredVersion string,
 ) (string, error) {
 	if nonStableDB {
-		const contentDisposition = "Content-Disposition"
-		_, disposition, err := mime.ParseMediaType(response.Header.Get(contentDisposition))
-		if err != nil {
-			return "", fmt.Errorf("error parsing %s headers %s: %w", contentDisposition, response.Header, err)
-		}
-		filename, ok := disposition["filename"]
-		if !ok {
-			return "", fmt.Errorf("content disposition header %s did not contain filename", disposition)
-		}
-		return filename, nil
+		log.Printf("Obsolete usage of GetDownloadFilename() with `nonStable` set to `true`")
 	}
 	filename := fmt.Sprintf("cockroach-%s", desiredVersion)
 	if runtime.GOOS == "windows" {
