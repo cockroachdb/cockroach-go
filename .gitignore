@@ -2,3 +2,4 @@
 .#*
 *.test
 testserver/cockroach-data/
+testserver/temp_binaries/
