@@ -235,6 +235,8 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			// TODO(asubiotto): Specify listeningURLFile once we support dynamic
 			//  ports.
 			listeningURLFile: "",
+			stdout:           filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
+			stderr:           filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
 		},
 	}
 
@@ -243,8 +245,6 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		version:     ts.version,
 		serverState: stateNew,
 		baseDir:     ts.baseDir,
-		stdout:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
-		stderr:      filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
 		nodes:       nodes,
 	}
 

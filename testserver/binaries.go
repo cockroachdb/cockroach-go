@@ -232,9 +232,6 @@ func downloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (stri
 func GetDownloadFilename(
 	response *http.Response, nonStableDB bool, desiredVersion string,
 ) (string, error) {
-	if nonStableDB {
-		log.Printf("Obsolete usage of GetDownloadFilename() with `nonStable` set to `true`")
-	}
 	filename := fmt.Sprintf("cockroach-%s", desiredVersion)
 	if runtime.GOOS == "windows" {
 		filename += ".exe"

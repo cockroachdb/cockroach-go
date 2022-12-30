@@ -29,7 +29,12 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 
 	// Kill the process.
 	if cmd.Process != nil {
-		return cmd.Process.Kill()
+		if err := cmd.Process.Kill(); err != nil {
+			return err
+		}
+		if _, err := cmd.Process.Wait(); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -55,23 +60,23 @@ func (ts *testServerImpl) StartNode(i int) error {
 	// folders.
 	currCmd.Dir = ts.baseDir
 
-	if len(ts.stdout) > 0 {
-		wr, err := newFileLogWriter(ts.stdout)
+	if len(ts.nodes[i].stdout) > 0 {
+		wr, err := newFileLogWriter(ts.nodes[i].stdout)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %w", ts.stdout, err)
+			return fmt.Errorf("unable to open file %s: %w", ts.nodes[i].stdout, err)
 		}
-		ts.stdoutBuf = wr
+		ts.nodes[i].stdoutBuf = wr
 	}
-	currCmd.Stdout = ts.stdoutBuf
+	currCmd.Stdout = ts.nodes[i].stdoutBuf
 
-	if len(ts.stderr) > 0 {
-		wr, err := newFileLogWriter(ts.stderr)
+	if len(ts.nodes[i].stderr) > 0 {
+		wr, err := newFileLogWriter(ts.nodes[i].stderr)
 		if err != nil {
-			return fmt.Errorf("unable to open file %s: %w", ts.stderr, err)
+			return fmt.Errorf("unable to open file %s: %w", ts.nodes[1].stderr, err)
 		}
-		ts.stderrBuf = wr
+		ts.nodes[i].stderrBuf = wr
 	}
-	currCmd.Stderr = ts.stderrBuf
+	currCmd.Stderr = ts.nodes[i].stderrBuf
 
 	for k, v := range defaultEnv() {
 		currCmd.Env = append(currCmd.Env, k+"="+v)
