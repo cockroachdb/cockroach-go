@@ -82,6 +82,7 @@ const defaultStoreMemSize = 0.2
 
 const defaultInitTimeout = 60
 const defaultPollListenURLTimeout = 60
+const defaultListenAddrHost = "localhost"
 
 const testserverMessagePrefix = "cockroach-go testserver"
 const tenantserverMessagePrefix = "cockroach-go tenantserver"
@@ -225,6 +226,7 @@ type testServerArgs struct {
 	storeMemSize                float64 // the proportion of available memory allocated to test server
 	httpPorts                   []int
 	listenAddrPorts             []int
+	listenAddrHost              string
 	testConfig                  TestConfig
 	nonStableDB                 bool
 	customVersion               string // custom cockroach version to use
@@ -335,6 +337,15 @@ func AddListenAddrPortOpt(port int) TestServerOpt {
 	}
 }
 
+// ListenAddrHostOpt is a TestServer option that can be passed to
+// NewTestServer to specify the host for Cockroach to listen on. By default,
+// this is `localhost`, and the most common override is 0.0.0.0.
+func ListenAddrHostOpt(host string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.listenAddrHost = host
+	}
+}
+
 // StopDownloadInMiddleOpt is a TestServer option used only in testing.
 // It is used to test the flock over downloaded CRDB binary.
 // It should not be used in production.
@@ -397,6 +408,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	serverArgs.storeMemSize = defaultStoreMemSize
 	serverArgs.initTimeoutSeconds = defaultInitTimeout
 	serverArgs.pollListenURLTimeoutSeconds = defaultPollListenURLTimeout
+	serverArgs.listenAddrHost = defaultListenAddrHost
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
 	}
@@ -550,8 +562,16 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				startCmd,
 				secureOpt,
 				storeArg,
-				fmt.Sprintf("--listen-addr=localhost:%d", serverArgs.listenAddrPorts[i]),
-				fmt.Sprintf("--http-addr=localhost:%d", serverArgs.httpPorts[i]),
+				fmt.Sprintf(
+					"--listen-addr=%s:%d",
+					serverArgs.listenAddrHost,
+					serverArgs.listenAddrPorts[i],
+				),
+				fmt.Sprintf(
+					"--http-addr=%s:%d",
+					serverArgs.listenAddrHost,
+					serverArgs.httpPorts[i],
+				),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 				joinArg,
 				"--external-io-dir=" + serverArgs.externalIODir,
@@ -562,7 +582,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				startCmd,
 				"--logtostderr",
 				secureOpt,
-				"--host=localhost",
+				fmt.Sprintf("--host=%s", serverArgs.listenAddrHost),
 				"--port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
 				"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
 				storeArg,
