@@ -50,6 +50,12 @@ func TestRunServer(t *testing.T) {
 			instantiation: func(t *testing.T) (*sql.DB, func()) { return testserver.NewDBForTest(t) },
 		},
 		{
+			name: "InsecureWithHostOverride",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.ListenAddrHostOpt("0.0.0.0"))
+			},
+		},
+		{
 			name: "InsecureWithCustomizedMemSize",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
 				return testserver.NewDBForTest(t, testserver.SetStoreMemSizeOpt(0.3))
