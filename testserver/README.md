@@ -1,8 +1,8 @@
 # cockroach-go Testserver
 
 The `testserver` package helps running cockroachDB binary with tests. It 
-automatically downloads the latest stable cockroach binary for your runtimeOS 
-(Linux-amd64 and Darwin-amd64 only for now), or attempts to run "cockroach" from your PATH.
+automatically downloads the latest stable cockroach binary for your runtimeOS,
+or attempts to run "cockroach" from your PATH.
 
 ### Example
 To run the test server, call `NewTestServer(opts)` and with test server options. 
