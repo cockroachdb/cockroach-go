@@ -46,8 +46,8 @@ const (
 )
 
 const (
-	linuxUrlpat  = "https://binaries.cockroachdb.com/cockroach-v%s.linux-amd64.tgz"
-	macUrlpat    = "https://binaries.cockroachdb.com/cockroach-v%s.darwin-10.9-amd64.tgz"
+	linuxUrlpat  = "https://binaries.cockroachdb.com/cockroach-v%s.linux-%s.tgz"
+	macUrlpat    = "https://binaries.cockroachdb.com/cockroach-v%s.darwin-%s-%s.tgz"
 	winUrlpat    = "https://binaries.cockroachdb.com/cockroach-v%s.windows-6.2-amd64.zip"
 	sourceUrlPat = "https://binaries.cockroachdb.com/cockroach-v%s.src.tgz)"
 )
@@ -266,9 +266,14 @@ func getLatestStableVersionInfo() (string, string, error) {
 func getDownloadUrlForVersion(version string) string {
 	switch runtime.GOOS {
 	case "linux":
-		return fmt.Sprintf(linuxUrlpat, version)
+		return fmt.Sprintf(linuxUrlpat, version, runtime.GOARCH)
 	case "darwin":
-		return fmt.Sprintf(macUrlpat, version)
+		switch runtime.GOARCH {
+		case "arm64":
+			return fmt.Sprintf(macUrlpat, version, "11.0", runtime.GOARCH)
+		case "amd64":
+			return fmt.Sprintf(macUrlpat, version, "10.9", runtime.GOARCH)
+		}
 	case "windows":
 		return fmt.Sprintf(winUrlpat, version)
 	}
