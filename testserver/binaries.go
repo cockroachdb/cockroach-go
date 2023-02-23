@@ -118,13 +118,13 @@ func GetDownloadResponse(desiredVersion string, nonStable bool) (*http.Response,
 	return response, desiredVersion, nil
 }
 
-// downloadBinary saves the latest version of CRDB into a local binary file,
+// DownloadBinary saves the latest version of CRDB into a local binary file,
 // and returns the path for this local binary.
 // To download a specific cockroach version, specify desiredVersion. Otherwise,
 // the latest stable or non-stable version will be chosen.
 // To download the latest STABLE version of CRDB, set `nonStable` to false.
 // To download the bleeding edge version of CRDB, set `nonStable` to true.
-func downloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (string, error) {
+func DownloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (string, error) {
 	response, desiredVersion, err := GetDownloadResponse(desiredVersion, nonStable)
 	if err != nil {
 		return "", err
