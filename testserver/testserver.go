@@ -13,9 +13,8 @@
 // permissions and limitations under the License.
 
 // Package testserver provides helpers to run a cockroach binary within tests.
-// It automatically downloads the latest cockroach binary for your platform
-// (Linux-amd64 and Darwin-amd64 only for now), or attempts to run "cockroach"
-// from your PATH.
+// It automatically downloads the latest cockroach binary for your platform,
+// or attempts to run "cockroach" from your PATH.
 //
 // To use, run as follows:
 //
