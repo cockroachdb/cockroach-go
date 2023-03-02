@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -348,7 +347,7 @@ func downloadBinaryFromTar(response *http.Response, output *os.File, filePath st
 // It is created because the download url from the release page only provides the tar.gz/zip
 // for a pre-compiled binary.
 func downloadBinaryFromZip(response *http.Response, output *os.File, filePath string) error {
-	body, err := ioutil.ReadAll(response.Body)
+	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return fmt.Errorf("cannot read zip from response body: %w", err)
 	}

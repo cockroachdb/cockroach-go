@@ -43,7 +43,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -458,7 +457,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	// Force "/tmp/" so avoid OSX's really long temp directory names
 	// which get us over the socket filename length limit.
-	baseDir, err := ioutil.TempDir("/tmp", "cockroach-testserver")
+	baseDir, err := os.MkdirTemp("/tmp", "cockroach-testserver")
 	if err != nil {
 		return nil, fmt.Errorf("%s: could not create temp directory: %w",
 			testserverMessagePrefix, err)
@@ -726,7 +725,7 @@ func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
 			return fmt.Errorf("server stopped or crashed before listening URL file was available")
 		}
 		var err error
-		data, err = ioutil.ReadFile(ts.nodes[nodeNum].listeningURLFile)
+		data, err = os.ReadFile(ts.nodes[nodeNum].listeningURLFile)
 		if len(data) == 0 {
 			time.Sleep(100 * time.Millisecond)
 			continue
@@ -929,7 +928,7 @@ func (w fileLogWriter) Write(p []byte) (n int, err error) {
 }
 
 func (w fileLogWriter) String() string {
-	b, err := ioutil.ReadFile(w.filename)
+	b, err := os.ReadFile(w.filename)
 	if err == nil {
 		return string(b)
 	}
