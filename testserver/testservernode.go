@@ -19,6 +19,7 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 func (ts *testServerImpl) StopNode(nodeNum int) error {
@@ -29,7 +30,7 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 
 	// Kill the process.
 	if cmd.Process != nil {
-		if err := cmd.Process.Kill(); err != nil {
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 			return err
 		}
 		if _, err := cmd.Process.Wait(); err != nil {
