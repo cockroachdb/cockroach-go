@@ -455,12 +455,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		}
 	}
 
-	// Force "/tmp/" so avoid OSX's really long temp directory names
-	// which get us over the socket filename length limit.
-	baseDir, err := os.MkdirTemp("/tmp", "cockroach-testserver")
+	baseDir, err := os.MkdirTemp("", "cockroach-testserver")
 	if err != nil {
-		return nil, fmt.Errorf("%s: could not create temp directory: %w",
-			testserverMessagePrefix, err)
+		return nil, fmt.Errorf("%s: could not create temp directory: %w", testserverMessagePrefix, err)
 	}
 
 	mkDir := func(name string) (string, error) {
