@@ -17,9 +17,11 @@ package testserver
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func (ts *testServerImpl) StopNode(nodeNum int) error {
@@ -37,6 +39,12 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 			return err
 		}
 	}
+	// Reset the pgURL, since it could change if the node is started later;
+	// specifically, if the listen port is 0 then the port will change.
+	ts.pgURL[nodeNum] = pgURLChan{}
+	if err := os.Remove(ts.nodes[nodeNum].listeningURLFile); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -47,7 +55,37 @@ func (ts *testServerImpl) StartNode(i int) error {
 		return fmt.Errorf("node %d already running", i)
 	}
 	ts.mu.RUnlock()
-	ts.nodes[i].startCmd = exec.Command(ts.nodes[i].startCmdArgs[0], ts.nodes[i].startCmdArgs[1:]...)
+
+	// We need to compute the join addresses here. since if the listen port is
+	// 0, then the actual port will not be known until a node is started.
+	var joinAddrs []string
+	for otherNodeID := range ts.nodes {
+		if i == otherNodeID {
+			continue
+		}
+		if ts.serverArgs.listenAddrPorts[otherNodeID] != 0 {
+			joinAddrs = append(joinAddrs, fmt.Sprintf("localhost:%d", ts.serverArgs.listenAddrPorts[otherNodeID]))
+			continue
+		}
+		select {
+		case <-ts.pgURL[otherNodeID].set:
+			joinAddrs = append(joinAddrs, fmt.Sprintf("localhost:%s", ts.pgURL[otherNodeID].u.Port()))
+		case <-time.After(5 * time.Second):
+			// If the other node hasn't started yet, don't add the join arg.
+		}
+	}
+	joinArg := fmt.Sprintf("--join=%s", strings.Join(joinAddrs, ","))
+
+	args := ts.nodes[i].startCmdArgs
+	if len(ts.nodes) > 1 {
+		if len(joinAddrs) == 0 {
+			// The start command always requires a --join arg, so we fake one
+			// if we don't have any yet.
+			joinArg = "--join=localhost:0"
+		}
+		args = append(args, joinArg)
+	}
+	ts.nodes[i].startCmd = exec.Command(args[0], args[1:]...)
 
 	currCmd := ts.nodes[i].startCmd
 	currCmd.Env = []string{
@@ -86,7 +124,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 	log.Printf("executing: %s", currCmd)
 	err := currCmd.Start()
 	if currCmd.Process != nil {
-		log.Printf("process %d started: %s", currCmd.Process.Pid, strings.Join(ts.nodes[i].startCmdArgs, " "))
+		log.Printf("process %d started: %s", currCmd.Process.Pid, strings.Join(args, " "))
 	}
 	if err != nil {
 		log.Print(err.Error())
