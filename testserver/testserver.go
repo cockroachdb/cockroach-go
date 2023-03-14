@@ -123,6 +123,9 @@ type TestServer interface {
 }
 
 type pgURLChan struct {
+	// started will be closed after the start command is executed.
+	started chan struct{}
+	// set will be closed once the URL is available after startup.
 	set chan struct{}
 	u   *url.URL
 	// The original URL is preserved here if we are using a custom password.
@@ -419,17 +422,12 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.cockroachBinary = customBinaryEnv
 	}
 
-	// For backwards compatibility, in the 3 node case where no args are
-	// specified, default to ports 26257, 26258, 26259.
-	if serverArgs.numNodes == 3 && len(serverArgs.listenAddrPorts) == 0 {
-		serverArgs.listenAddrPorts = []int{26257, 26258, 26259}
-	} else if serverArgs.numNodes != 1 && len(serverArgs.listenAddrPorts) != serverArgs.numNodes {
+	if len(serverArgs.listenAddrPorts) == 0 {
+		serverArgs.listenAddrPorts = make([]int, serverArgs.numNodes)
+	}
+	if serverArgs.numNodes != 1 && len(serverArgs.listenAddrPorts) != serverArgs.numNodes {
 		panic(fmt.Sprintf("need to specify a port for each node using AddListenAddrPortOpt, got %d nodes, need %d ports",
 			serverArgs.numNodes, len(serverArgs.listenAddrPorts)))
-	}
-
-	if len(serverArgs.listenAddrPorts) == 0 {
-		serverArgs.listenAddrPorts = []int{0}
 	}
 
 	var err error
@@ -522,13 +520,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	nodes := make([]nodeInfo, serverArgs.numNodes)
-	var initArgs []string
-	joinAddrs := make([]string, 3)
-	hostPort := serverArgs.listenAddrPorts[0]
-	for i, port := range serverArgs.listenAddrPorts {
-		joinAddrs[i] = fmt.Sprintf("localhost:%d", port)
-	}
-
 	if len(serverArgs.httpPorts) == 0 {
 		serverArgs.httpPorts = make([]int, serverArgs.numNodes)
 	}
@@ -551,7 +542,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		nodes[i].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
 		nodes[i].state = stateNew
 		if serverArgs.numNodes > 1 {
-			joinArg := fmt.Sprintf("--join=%s", strings.Join(joinAddrs, ","))
 			nodes[i].startCmdArgs = []string{
 				serverArgs.cockroachBinary,
 				startCmd,
@@ -568,7 +558,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 					serverArgs.httpPorts[i],
 				),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
-				joinArg,
 				"--external-io-dir=" + serverArgs.externalIODir,
 			}
 		} else {
@@ -589,11 +578,10 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	// We only need initArgs if we're creating a testserver
 	// with multiple nodes.
-	initArgs = []string{
+	initArgs := []string{
 		serverArgs.cockroachBinary,
 		"init",
 		secureOpt,
-		fmt.Sprintf("--host=localhost:%d", hostPort),
 	}
 
 	states := make([]int, serverArgs.numNodes)
@@ -611,6 +599,10 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		nodes:       nodes,
 	}
 	ts.pgURL = make([]pgURLChan, serverArgs.numNodes)
+	for i := range ts.pgURL {
+		ts.pgURL[i].started = make(chan struct{})
+		ts.pgURL[i].set = make(chan struct{})
+	}
 
 	if err := ts.Start(); err != nil {
 		return nil, fmt.Errorf("%s Start failed: %w", testserverMessagePrefix, err)
@@ -676,9 +668,10 @@ func (ts *testServerImpl) setPGURLForNode(nodeNum int, u *url.URL) {
 }
 
 func (ts *testServerImpl) WaitForInitFinishForNode(nodeIdx int) error {
+	pgURL := ts.PGURLForNode(nodeIdx).String()
 	for i := 0; i < ts.serverArgs.initTimeoutSeconds*10; i++ {
 		err := func() error {
-			db, err := sql.Open("postgres", ts.PGURLForNode(nodeIdx).String())
+			db, err := sql.Open("postgres", pgURL)
 			if err != nil {
 				return err
 			}
@@ -695,7 +688,7 @@ func (ts *testServerImpl) WaitForInitFinishForNode(nodeIdx int) error {
 		if err == nil {
 			return nil
 		}
-		log.Printf("%s: WaitForInitFinishForNode %d: Trying again after error: %v", testserverMessagePrefix, nodeIdx, err)
+		log.Printf("%s: WaitForInitFinishForNode %d (%s): Trying again after error: %v", testserverMessagePrefix, nodeIdx, pgURL, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 	log.Printf(
@@ -867,7 +860,10 @@ func (ts *testServerImpl) Stop() {
 }
 
 func (ts *testServerImpl) CockroachInit() error {
-	ts.initCmd = exec.Command(ts.initCmdArgs[0], ts.initCmdArgs[1:]...)
+	// The port must be computed here, since it may not be known until after
+	// a node is started (if the listen port is 0).
+	args := append(ts.initCmdArgs, fmt.Sprintf("--host=localhost:%s", ts.PGURL().Port()))
+	ts.initCmd = exec.Command(args[0], args[1:]...)
 	ts.initCmd.Env = []string{
 		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
@@ -880,7 +876,7 @@ func (ts *testServerImpl) CockroachInit() error {
 
 	err := ts.initCmd.Start()
 	if ts.initCmd.Process != nil {
-		log.Printf("process %d started: %s", ts.initCmd.Process.Pid, strings.Join(ts.initCmdArgs, " "))
+		log.Printf("process %d started: %s", ts.initCmd.Process.Pid, strings.Join(args, " "))
 	}
 	if err != nil {
 		return err

@@ -630,9 +630,6 @@ func TestUpgradeNode(t *testing.T) {
 		testserver.CockroachBinaryPathOpt(absPathOldBinary),
 		testserver.UpgradeCockroachBinaryPathOpt(absPathNewBinary),
 		testserver.StoreOnDiskOpt(),
-		testserver.AddListenAddrPortOpt(26257),
-		testserver.AddListenAddrPortOpt(26258),
-		testserver.AddListenAddrPortOpt(26259),
 	)
 	require.NoError(t, err)
 	defer ts.Stop()
@@ -700,14 +697,13 @@ func TestUpgradeNode(t *testing.T) {
 	}
 }
 
-var wg = sync.WaitGroup{}
-
 // testFlockWithDownloadPassing is to test the flock over downloaded CRDB binary with
 // two goroutines, the second goroutine waits for the first goroutine to
 // finish downloading the CRDB binary into a local file.
 func testFlockWithDownloadPassing(
 	t *testing.T, opts ...testserver.TestServerOpt,
 ) (*sql.DB, func()) {
+	var wg = sync.WaitGroup{}
 
 	localFile, err := getLocalFile(false)
 	if err != nil {

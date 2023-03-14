@@ -254,6 +254,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	tenantURL := ts.pgURL[0].orig
 	tenantURL.Host = sqlAddr
 	tenant.pgURL = make([]pgURLChan, 1)
+	tenant.pgURL[0].started = make(chan struct{})
 	tenant.pgURL[0].set = make(chan struct{})
 
 	tenant.setPGURL(&tenantURL)
