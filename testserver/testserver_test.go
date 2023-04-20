@@ -784,3 +784,34 @@ func removeExistingLocalFile(localFile string) error {
 	}
 	return nil
 }
+
+func TestLocalityFlagsOpt(t *testing.T) {
+	ts, err := testserver.NewTestServer(
+		testserver.ThreeNodeOpt(),
+		testserver.LocalityFlagsOpt("region=us-east1", "region=us-central1", "region=us-west1"))
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		ts.WaitForInitFinishForNode(i)
+	}
+
+	db, err := sql.Open("postgres", ts.PGURL().String())
+	require.NoError(t, err)
+
+	found := map[string]bool{}
+
+	rows, err := db.Query("SELECT region FROM [SHOW REGIONS]")
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var region string
+		require.NoError(t, rows.Scan(&region))
+		found[region] = true
+	}
+
+	require.Equal(t, map[string]bool{
+		"us-east1":    true,
+		"us-central1": true,
+		"us-west1":    true,
+	}, found)
+}

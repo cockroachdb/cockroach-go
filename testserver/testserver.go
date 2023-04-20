@@ -238,6 +238,7 @@ type testServerArgs struct {
 	initTimeoutSeconds          int
 	pollListenURLTimeoutSeconds int
 	envVars                     []string // to be passed to cmd.Env
+	localityFlags               []string
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -383,6 +384,18 @@ func PollListenURLTimeoutOpt(timeout int) TestServerOpt {
 	}
 }
 
+// LocalityFlagsOpt is used to specify the --locality flag for each node.
+//
+// Example Usage:
+//
+//	localities := LocalityFlagsOpt("region=us-west", "region=us-east", "region=us-central")
+//	server, err := NewTestServer(ThreeNodeOpt(), localities)
+func LocalityFlagsOpt(locality ...string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.localityFlags = locality
+	}
+}
+
 // EnvVarOpt is a list of environment variables to be passed to the start
 // command. Each entry in the slice should be in `key=value` format.
 func EnvVarOpt(vars []string) TestServerOpt {
@@ -428,6 +441,10 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	if serverArgs.numNodes != 1 && len(serverArgs.listenAddrPorts) != serverArgs.numNodes {
 		panic(fmt.Sprintf("need to specify a port for each node using AddListenAddrPortOpt, got %d nodes, need %d ports",
 			serverArgs.numNodes, len(serverArgs.listenAddrPorts)))
+	}
+
+	if 0 < len(serverArgs.localityFlags) && len(serverArgs.localityFlags) != serverArgs.numNodes {
+		panic(fmt.Sprintf("got %d locality flags when %d are needed (one for each node)", len(serverArgs.localityFlags), serverArgs.numNodes))
 	}
 
 	var err error
@@ -573,6 +590,9 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 				"--external-io-dir=" + serverArgs.externalIODir,
 			}
+		}
+		if 0 < len(serverArgs.localityFlags) {
+			nodes[i].startCmdArgs = append(nodes[i].startCmdArgs, fmt.Sprintf("--locality=%s", serverArgs.localityFlags[i]))
 		}
 	}
 
