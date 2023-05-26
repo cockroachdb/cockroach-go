@@ -815,3 +815,33 @@ func TestLocalityFlagsOpt(t *testing.T) {
 		"us-west1":    true,
 	}, found)
 }
+
+func TestCockroachLogsDirOpt(t *testing.T) {
+	logsDir, err := os.MkdirTemp("", "logs-dir-opt")
+	require.NoError(t, err)
+	defer require.NoError(t, os.RemoveAll(logsDir))
+
+	ts, err := testserver.NewTestServer(
+		testserver.ThreeNodeOpt(),
+		testserver.CockroachLogsDirOpt(logsDir))
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		if err := ts.WaitForInitFinishForNode(i); err != nil {
+			// Make sure we stop the testserver in this case as well.
+			ts.Stop()
+			require.NoError(t, err)
+		}
+	}
+
+	// This should delete all resources, but log files should
+	// continue to exist under `logsDir`.
+	ts.Stop()
+
+	for _, nodeID := range []string{"0", "1", "2"} {
+		for _, logFile := range []string{"cockroach.stdout", "cockroach.stderr"} {
+			_, err := os.Stat(filepath.Join(logsDir, nodeID, logFile))
+			require.NoError(t, err)
+		}
+	}
+}
