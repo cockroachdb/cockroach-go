@@ -239,6 +239,7 @@ type testServerArgs struct {
 	pollListenURLTimeoutSeconds int
 	envVars                     []string // to be passed to cmd.Env
 	localityFlags               []string
+	cockroachLogsDir            string
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -404,6 +405,15 @@ func EnvVarOpt(vars []string) TestServerOpt {
 	}
 }
 
+// CockroachLogsDirOpt allows callers to control where the stdout and
+// stderr of cockroach processes created by the testserver are
+// located. Files will be in the format: $nodeID/cockroach.std{out,err}.
+func CockroachLogsDirOpt(dir string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.cockroachLogsDir = dir
+	}
+}
+
 const (
 	logsDirName  = "logs"
 	certsDirName = "certs"
@@ -418,14 +428,21 @@ var errStoppedInMiddle = errors.New("download stopped in middle")
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
 func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
+	baseDir, err := os.MkdirTemp("", "cockroach-testserver")
+	if err != nil {
+		return nil, fmt.Errorf("%s: could not create temp directory: %w", testserverMessagePrefix, err)
+	}
+
 	serverArgs := &testServerArgs{numNodes: 1}
 	serverArgs.storeMemSize = defaultStoreMemSize
 	serverArgs.initTimeoutSeconds = defaultInitTimeout
 	serverArgs.pollListenURLTimeoutSeconds = defaultPollListenURLTimeout
 	serverArgs.listenAddrHost = defaultListenAddrHost
+	serverArgs.cockroachLogsDir = baseDir
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
 	}
+	log.Printf("cockroach logs directory: %s", serverArgs.cockroachLogsDir)
 
 	if serverArgs.cockroachBinary != "" {
 		// CockroachBinaryPathOpt() overrides the flag or env variable.
@@ -447,7 +464,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		panic(fmt.Sprintf("got %d locality flags when %d are needed (one for each node)", len(serverArgs.localityFlags), serverArgs.numNodes))
 	}
 
-	var err error
 	if serverArgs.cockroachBinary != "" {
 		log.Printf("Using custom cockroach binary: %s", serverArgs.cockroachBinary)
 		cockroachBinary, err := filepath.Abs(serverArgs.cockroachBinary)
@@ -468,11 +484,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		} else {
 			log.Printf("Using automatically-downloaded binary: %s", serverArgs.cockroachBinary)
 		}
-	}
-
-	baseDir, err := os.MkdirTemp("", "cockroach-testserver")
-	if err != nil {
-		return nil, fmt.Errorf("%s: could not create temp directory: %w", testserverMessagePrefix, err)
 	}
 
 	mkDir := func(name string) (string, error) {
@@ -547,15 +558,19 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	for i := 0; i < serverArgs.numNodes; i++ {
 		storeArg := fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
-		nodeBaseDir := filepath.Join(baseDir, strconv.Itoa(i))
+		logsBaseDir := filepath.Join(serverArgs.cockroachLogsDir, strconv.Itoa(i))
+		nodeBaseDir, err := mkDir(strconv.Itoa(i))
+		if err != nil {
+			return nil, err
+		}
 		if serverArgs.storeOnDisk {
 			storeArg = fmt.Sprintf("--store=path=%s", nodeBaseDir)
 		}
 		// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
 		// Should be done once issue #109 is solved:
 		// https://github.com/cockroachdb/cockroach-go/issues/109
-		nodes[i].stdout = filepath.Join(nodeBaseDir, "cockroach.stdout")
-		nodes[i].stderr = filepath.Join(nodeBaseDir, "cockroach.stderr")
+		nodes[i].stdout = filepath.Join(logsBaseDir, "cockroach.stdout")
+		nodes[i].stderr = filepath.Join(logsBaseDir, "cockroach.stderr")
 		nodes[i].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
 		nodes[i].state = stateNew
 		if serverArgs.numNodes > 1 {
@@ -831,7 +846,6 @@ func (ts *testServerImpl) Stop() {
 			testserverMessagePrefix,
 			ts.Stdout(),
 			ts.Stderr())
-		return
 	}
 
 	if ts.serverState != stateStopped {
