@@ -577,6 +577,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 			nodes[i].startCmdArgs = []string{
 				serverArgs.cockroachBinary,
 				startCmd,
+				"--logtostderr",
 				secureOpt,
 				storeArg,
 				fmt.Sprintf(
