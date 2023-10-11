@@ -234,6 +234,12 @@ func TestRunServer(t *testing.T) {
 				)
 			},
 		},
+		{
+			name: "No File Cleanup",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.NoFileCleanup())
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation(t)

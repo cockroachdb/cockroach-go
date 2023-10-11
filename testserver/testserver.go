@@ -240,6 +240,7 @@ type testServerArgs struct {
 	envVars                     []string // to be passed to cmd.Env
 	localityFlags               []string
 	cockroachLogsDir            string
+	noFileCleanup               bool // do not clean files at `Stop`
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -271,6 +272,14 @@ func SecureOpt() TestServerOpt {
 func StoreOnDiskOpt() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.storeOnDisk = true
+	}
+}
+
+// NoFileCleanup is a TestServer option that can be passed to NewTestServer
+// to skip cleanup of files when Testserver is stopped
+func NoFileCleanup() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.noFileCleanup = true
 	}
 }
 
@@ -879,7 +888,9 @@ func (ts *testServerImpl) Stop() {
 		ts.mu.RLock()
 
 		nodeDir := filepath.Join(ts.baseDir, strconv.Itoa(i))
-		if err := os.RemoveAll(nodeDir); err != nil {
+		if ts.serverArgs.noFileCleanup {
+			log.Printf("%s: skipping file cleanup of node-dir %s", testserverMessagePrefix, nodeDir)
+		} else if err := os.RemoveAll(nodeDir); err != nil {
 			log.Printf("error deleting tmp directory %s for node: %s", nodeDir, err)
 		}
 		if closeErr := ts.nodes[i].stdoutBuf.Close(); closeErr != nil {
@@ -891,7 +902,11 @@ func (ts *testServerImpl) Stop() {
 	}
 
 	// Only cleanup on intentional stops.
-	_ = os.RemoveAll(ts.baseDir)
+	if ts.serverArgs.noFileCleanup {
+		log.Printf("%s: skipping file cleanup of base-dir %s", testserverMessagePrefix, ts.baseDir)
+	} else {
+		_ = os.RemoveAll(ts.baseDir)
+	}
 }
 
 func (ts *testServerImpl) CockroachInit() error {
