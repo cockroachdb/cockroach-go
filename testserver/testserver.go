@@ -152,7 +152,6 @@ type testServerImpl struct {
 	version     *version.Version
 	serverArgs  testServerArgs
 	serverState int
-	baseDir     string
 	pgURL       []pgURLChan
 	initCmd     *exec.Cmd
 	initCmdArgs []string
@@ -241,6 +240,7 @@ type testServerArgs struct {
 	localityFlags               []string
 	cockroachLogsDir            string
 	noFileCleanup               bool // do not clean files at `Stop`
+	baseDir                     string
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -280,6 +280,15 @@ func StoreOnDiskOpt() TestServerOpt {
 func NoFileCleanup() TestServerOpt {
 	return func(args *testServerArgs) {
 		args.noFileCleanup = true
+	}
+}
+
+// BasedirOverride is a TestServer option that can be passed to NewTestServer
+// to use a given path as testserver base-dir (as opposed to creating a
+// temporary one on the fly, which is the default behavior).
+func BasedirOverride(baseDirPath string) TestServerOpt {
+	return func(args *testServerArgs) {
+		args.baseDir = baseDirPath
 	}
 }
 
@@ -437,20 +446,26 @@ var errStoppedInMiddle = errors.New("download stopped in middle")
 // If the download fails, we attempt just call "cockroach", hoping it is
 // found in your path.
 func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
-	baseDir, err := os.MkdirTemp("", "cockroach-testserver")
-	if err != nil {
-		return nil, fmt.Errorf("%s: could not create temp directory: %w", testserverMessagePrefix, err)
-	}
-
 	serverArgs := &testServerArgs{numNodes: 1}
 	serverArgs.storeMemSize = defaultStoreMemSize
 	serverArgs.initTimeoutSeconds = defaultInitTimeout
 	serverArgs.pollListenURLTimeoutSeconds = defaultPollListenURLTimeout
 	serverArgs.listenAddrHost = defaultListenAddrHost
-	serverArgs.cockroachLogsDir = baseDir
 	for _, applyOptToArgs := range opts {
 		applyOptToArgs(serverArgs)
 	}
+	var err error
+	if serverArgs.baseDir == "" {
+		baseDir, err := os.MkdirTemp("", "cockroach-testserver")
+		if err != nil {
+			return nil, fmt.Errorf("%s: could not create temp directory: %w", testserverMessagePrefix, err)
+		}
+		serverArgs.baseDir = baseDir
+		if serverArgs.cockroachLogsDir == "" {
+			serverArgs.cockroachLogsDir = baseDir
+		}
+	}
+
 	log.Printf("cockroach logs directory: %s", serverArgs.cockroachLogsDir)
 
 	if serverArgs.cockroachBinary != "" {
@@ -496,7 +511,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 	}
 
 	mkDir := func(name string) (string, error) {
-		path := filepath.Join(baseDir, name)
+		path := filepath.Join(serverArgs.baseDir, name)
 		if err := os.MkdirAll(path, 0755); err != nil {
 			return "", fmt.Errorf("%s: could not create %s directory: %s: %w",
 				testserverMessagePrefix, name, path, err)
@@ -638,7 +653,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs:  *serverArgs,
 		version:     v,
 		serverState: stateNew,
-		baseDir:     baseDir,
 		initCmdArgs: initArgs,
 		curTenantID: firstTenantID,
 		nodes:       nodes,
@@ -686,7 +700,7 @@ func (ts *testServerImpl) StderrForNode(i int) string {
 
 // BaseDir returns directory StoreOnDiskOpt writes to if used.
 func (ts *testServerImpl) BaseDir() string {
-	return ts.baseDir
+	return ts.serverArgs.baseDir
 }
 
 // PGURL returns the postgres connection URL to reach the started
@@ -887,7 +901,7 @@ func (ts *testServerImpl) Stop() {
 		}
 		ts.mu.RLock()
 
-		nodeDir := filepath.Join(ts.baseDir, strconv.Itoa(i))
+		nodeDir := filepath.Join(ts.BaseDir(), strconv.Itoa(i))
 		if ts.serverArgs.noFileCleanup {
 			log.Printf("%s: skipping file cleanup of node-dir %s", testserverMessagePrefix, nodeDir)
 		} else if err := os.RemoveAll(nodeDir); err != nil {
@@ -903,9 +917,9 @@ func (ts *testServerImpl) Stop() {
 
 	// Only cleanup on intentional stops.
 	if ts.serverArgs.noFileCleanup {
-		log.Printf("%s: skipping file cleanup of base-dir %s", testserverMessagePrefix, ts.baseDir)
+		log.Printf("%s: skipping file cleanup of base-dir %s", testserverMessagePrefix, ts.BaseDir())
 	} else {
-		_ = os.RemoveAll(ts.baseDir)
+		_ = os.RemoveAll(ts.BaseDir())
 	}
 }
 
@@ -922,7 +936,7 @@ func (ts *testServerImpl) CockroachInit() error {
 	// Set the working directory of the cockroach process to our temp folder.
 	// This stops cockroach from polluting the project directory with _dump
 	// folders.
-	ts.initCmd.Dir = ts.baseDir
+	ts.initCmd.Dir = ts.serverArgs.baseDir
 
 	err := ts.initCmd.Start()
 	if ts.initCmd.Process != nil {

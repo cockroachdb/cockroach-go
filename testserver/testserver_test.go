@@ -254,6 +254,35 @@ func TestRunServer(t *testing.T) {
 	}
 }
 
+func TestBaseDirIsPreservedWhenNoFileCleanupRequested(t *testing.T) {
+	ts, err := testserver.NewTestServer(
+		testserver.NoFileCleanup(),
+		testserver.StoreOnDiskOpt())
+	require.NoError(t, err)
+	baseDir := ts.BaseDir()
+
+	db, err := sql.Open("postgres", ts.PGURL().String())
+	require.NoError(t, err)
+
+	_, err = db.Exec("create table store_preservation_test(id int primary key)")
+	require.NoError(t, err)
+	_, err = db.Exec("insert into store_preservation_test(id) values (123456789)")
+	require.NoError(t, err)
+	ts.Stop()
+
+	newTs, err := testserver.NewTestServer(
+		testserver.BasedirOverride(baseDir),
+		testserver.StoreOnDiskOpt())
+	require.NoError(t, err)
+	defer newTs.Stop()
+	db, err = sql.Open("postgres", newTs.PGURL().String())
+	require.NoError(t, err)
+	row := db.QueryRow("select id from store_preservation_test")
+	retrivedIntVal := 0
+	require.NoError(t, row.Scan(&retrivedIntVal))
+	require.Equal(t, 123456789, retrivedIntVal)
+}
+
 func TestCockroachBinaryPathOpt(t *testing.T) {
 	crdbBinary := "doesnotexist"
 	_, err := testserver.NewTestServer(testserver.CockroachBinaryPathOpt(crdbBinary))
