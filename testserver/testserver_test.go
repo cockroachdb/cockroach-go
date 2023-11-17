@@ -762,11 +762,11 @@ func testFlockWithDownloadKilled(t *testing.T) (*sql.DB, func()) {
 
 // getLocalFile returns the to-be-downloaded CRDB binary's local path.
 func getLocalFile(nonStable bool) (string, error) {
-	response, latestStableVersion, err := testserver.GetDownloadResponse("", nonStable)
+	_, latestStableVersion, err := testserver.GetDownloadURL("", nonStable)
 	if err != nil {
 		return "", err
 	}
-	filename, err := testserver.GetDownloadFilename(response, nonStable, latestStableVersion)
+	filename, err := testserver.GetDownloadFilename(latestStableVersion)
 	if err != nil {
 		return "", err
 	}
