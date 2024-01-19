@@ -306,9 +306,10 @@ func NonStableDbOpt() TestServerOpt {
 
 // CustomVersionOpt is a TestServer option that can be passed to NewTestServer to
 // download the a specific version of CRDB.
-func CustomVersionOpt(version string) TestServerOpt {
+func CustomVersionOpt(ver string) TestServerOpt {
 	return func(args *testServerArgs) {
-		args.customVersion = version
+		_ = version.MustParse(ver)
+		args.customVersion = ver
 	}
 }
 
