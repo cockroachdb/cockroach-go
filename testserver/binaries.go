@@ -19,7 +19,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +34,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cockroachdb/cockroach-go/v2/testserver/version"
 	"github.com/gofrs/flock"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -45,15 +46,17 @@ const (
 )
 
 const (
-	linuxUrlpat  = "https://binaries.cockroachdb.com/cockroach-v%s.linux-%s.tgz"
-	macUrlpat    = "https://binaries.cockroachdb.com/cockroach-v%s.darwin-%s-%s.tgz"
-	winUrlpat    = "https://binaries.cockroachdb.com/cockroach-v%s.windows-6.2-amd64.zip"
-	sourceUrlPat = "https://binaries.cockroachdb.com/cockroach-v%s.src.tgz)"
+	linuxUrlpat = "https://binaries.cockroachdb.com/cockroach-%s.linux-%s.tgz"
+	macUrlpat   = "https://binaries.cockroachdb.com/cockroach-%s.darwin-%s-%s.tgz"
+	winUrlpat   = "https://binaries.cockroachdb.com/cockroach-%s.windows-6.2-amd64.zip"
 )
 
-// updatesUrl is used to get the info of the latest stable version of CRDB.
-// Note that it may return a withdrawn version, but the risk is low for local tests here.
-const updatesUrl = "https://register.cockroachdb.com/api/updates"
+// releaseDataURL is the location of the YAML file maintained by the
+// docs team where release information is encoded. This data is used
+// to render the public CockroachDB releases page. We leverage the
+// data in structured format to generate release information used
+// for testing purposes.
+const releaseDataURL = "https://raw.githubusercontent.com/cockroachdb/docs/main/src/current/_data/releases.yml"
 
 var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
 
@@ -249,9 +252,7 @@ func DownloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (stri
 }
 
 // GetDownloadFilename returns the local filename of the downloaded CRDB binary file.
-func GetDownloadFilename(
-	desiredVersion string,
-) (string, error) {
+func GetDownloadFilename(desiredVersion string) (string, error) {
 	filename := fmt.Sprintf("cockroach-%s", desiredVersion)
 	if runtime.GOOS == "windows" {
 		filename += ".exe"
@@ -259,27 +260,69 @@ func GetDownloadFilename(
 	return filename, nil
 }
 
+// Release contains the information we extract from the YAML file in
+// `releaseDataURL`.
+type Release struct {
+	Name      string `yaml:"release_name"`
+	Withdrawn bool   `yaml:"withdrawn"`
+	CloudOnly bool   `yaml:"cloud_only"`
+}
+
 // getLatestStableVersionInfo returns the latest stable CRDB's download URL,
 // and the formatted corresponding version number. The download URL is based
 // on the runtime OS.
 // Note that it may return a withdrawn version, but the risk is low for local tests here.
 func getLatestStableVersionInfo() (string, string, error) {
-	resp, err := http.Get(updatesUrl)
+	resp, err := http.Get(releaseDataURL)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("could not download release data: %w", err)
 	}
-	var respJson map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&respJson); err != nil {
-		return "", "", err
-	}
-	latestStableVersion, ok := respJson["version"]
-	if !ok {
-		return "", "", fmt.Errorf("api/updates response is of wrong format")
+	defer resp.Body.Close()
+
+	var blob bytes.Buffer
+	if _, err := io.Copy(&blob, resp.Body); err != nil {
+		return "", "", fmt.Errorf("error reading response body: %w", err)
 	}
 
-	downloadUrl := getDownloadUrlForVersion(latestStableVersion)
+	var data []Release
+	if err := yaml.Unmarshal(blob.Bytes(), &data); err != nil { //nolint:yaml
+		return "", "", fmt.Errorf("failed to YAML parse release data: %w", err)
+	}
 
-	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion, ".", "-")
+	latestStableVersion := version.MustParse("v0.0.0")
+
+	for _, r := range data {
+		// We ignore versions that cannot be parsed; this should
+		// correspond to really old beta releases.
+		v, err := version.Parse(r.Name)
+		if err != nil {
+			continue
+		}
+
+		// Skip cloud-only releases, since they cannot be downloaded from
+		// binaries.cockroachdb.com.
+		if r.CloudOnly {
+			continue
+		}
+
+		// Ignore any withdrawn releases, since they are known to be broken.
+		if r.Withdrawn {
+			continue
+		}
+
+		// Ignore alphas, betas, and RCs.
+		if v.PreRelease() != "" {
+			continue
+		}
+
+		if v.Compare(latestStableVersion) > 0 {
+			latestStableVersion = v
+		}
+	}
+
+	downloadUrl := getDownloadUrlForVersion(latestStableVersion.String())
+
+	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion.String(), ".", "-")
 	return downloadUrl, latestStableVerFormatted, nil
 }
 

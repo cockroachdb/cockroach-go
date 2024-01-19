@@ -131,7 +131,7 @@ func TestRunServer(t *testing.T) {
 		{
 			name: "InsecureCustomVersion",
 			instantiation: func(t *testing.T) (*sql.DB, func()) {
-				return testserver.NewDBForTest(t, testserver.CustomVersionOpt("21.2.15"))
+				return testserver.NewDBForTest(t, testserver.CustomVersionOpt("v21.2.15"))
 			},
 		},
 		{
