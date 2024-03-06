@@ -78,6 +78,8 @@ const (
 // By default, we allocate 20% of available memory to the test server.
 const defaultStoreMemSize = 0.2
 
+const defaultCacheSize = 0.1
+
 const defaultInitTimeout = 60
 const defaultPollListenURLTimeout = 60
 const defaultListenAddrHost = "localhost"
@@ -224,7 +226,8 @@ type testServerArgs struct {
 	secure                      bool
 	rootPW                      string  // if nonempty, set as pw for root
 	storeOnDisk                 bool    // to save database in disk
-	storeMemSize                float64 // the proportion of available memory allocated to test server
+	storeMemSize                float64 // the proportion of available memory allocated to test server in-memory store
+	cacheSize                   float64 // the proportion of available memory allocated to cache
 	httpPorts                   []int
 	listenAddrPorts             []int
 	listenAddrHost              string
@@ -283,6 +286,18 @@ func SetStoreMemSizeOpt(memSize float64) TestServerOpt {
 			args.storeMemSize = memSize
 		} else {
 			args.storeMemSize = defaultStoreMemSize
+		}
+	}
+}
+
+// CacheSizeOpt sets the proportion of available memory that is allocated
+// to the CockroachDB cache.
+func CacheSizeOpt(cacheSize float64) TestServerOpt {
+	return func(args *testServerArgs) {
+		if cacheSize > 0 {
+			args.cacheSize = cacheSize
+		} else {
+			args.cacheSize = defaultCacheSize
 		}
 	}
 }
@@ -436,6 +451,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 
 	serverArgs := &testServerArgs{numNodes: 1}
 	serverArgs.storeMemSize = defaultStoreMemSize
+	serverArgs.cacheSize = defaultCacheSize
 	serverArgs.initTimeoutSeconds = defaultInitTimeout
 	serverArgs.pollListenURLTimeoutSeconds = defaultPollListenURLTimeout
 	serverArgs.listenAddrHost = defaultListenAddrHost
@@ -604,6 +620,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 				"--port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
 				"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
 				storeArg,
+				"--cache=" + strconv.FormatFloat(serverArgs.cacheSize, 'f', 4, 64),
 				"--listening-url-file=" + nodes[i].listeningURLFile,
 				"--external-io-dir=" + serverArgs.externalIODir,
 			}
