@@ -7,14 +7,16 @@ on:
     branches: [ master ]
 
 jobs:
-
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         go:
-          - "1.18"
           - "1.19"
+          - "1.20"
+          - "1.21"
+          - "1.22"
+
     steps:
     - uses: actions/checkout@v2
 
@@ -26,32 +28,38 @@ jobs:
     - name: Install dependencies
       run: |
         # The latest crlfmt requires go1.19.
-        go install github.com/cockroachdb/crlfmt@024b567ce87bf2b89f2cffabb7a8f4ea0cfa8b98
-        go install github.com/kisielk/errcheck@latest
+        go install github.com/cockroachdb/crlfmt@v0.1.0
+        go install github.com/kisielk/errcheck@v1.7.0
         go install github.com/mdempsky/unconvert@latest
-        go install honnef.co/go/tools/cmd/staticcheck@2022.1.3
+        go install honnef.co/go/tools/cmd/staticcheck@2023.1.7
         go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
-
 
     - name: Build
       run: go build -v ./...
 
     - name: Test
       run: go test -v ./...
+
     - name: Race
       run:  go test -p 1 -v ./...
+
     - name: gofmt
       run: gofmt -s -d -l .
+
     - name: vet
       run: |
         ! go vet -vettool=$(which shadow) ./... 2>&1 | \
           grep -vF 'declaration of "err" shadows declaration at' | \
-          grep -vF "# github.com/cockroachdb/cockroach-go/v2/testserver"
+          grep -vF "# github.com/cockroachdb/cockroach-go/v2/testserver" | \
+          grep -vF "# [github.com/cockroachdb/cockroach-go/v2/testserver_test]"
+
     - name: License checks
       run: |
         ! git grep -lE '^// Author' -- '*.go'
         ! git grep -LE '^// Copyright' -- '*.go'
+
     - name: errchk
       run: errcheck -ignore "Close|Init|AutoMigrate"  ./...
+
     - name: staticcheck
       run: staticcheck ./...
