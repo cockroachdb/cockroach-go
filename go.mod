@@ -1,6 +1,6 @@
 module github.com/cockroachdb/cockroach-go/v2
 
-go 1.18
+go 1.19
 
 require (
 	github.com/gofrs/flock v0.8.1
