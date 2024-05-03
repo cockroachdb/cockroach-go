@@ -48,7 +48,8 @@ jobs:
       run: |
         ! go vet -vettool=$(which shadow) ./... 2>&1 | \
           grep -vF 'declaration of "err" shadows declaration at' | \
-          grep -vF "# github.com/cockroachdb/cockroach-go/v2/testserver"
+          grep -vF "# github.com/cockroachdb/cockroach-go/v2/testserver" | \
+          grep -vF "# [github.com/cockroachdb/cockroach-go/v2/testserver_test]"
     - name: License checks
       run: |
         ! git grep -lE '^// Author' -- '*.go'
