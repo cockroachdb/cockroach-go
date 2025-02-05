@@ -5,7 +5,7 @@ go 1.23
 require (
 	github.com/gofrs/flock v0.8.1
 	github.com/jackc/pgx/v4 v4.18.3
-	github.com/jackc/pgx/v5 v5.5.2
+	github.com/jackc/pgx/v5 v5.5.4
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/lib/pq v1.10.6
 	github.com/stretchr/testify v1.8.1
