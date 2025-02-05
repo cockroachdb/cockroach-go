@@ -27,7 +27,6 @@ jobs:
     strategy:
       matrix:
         go:
-          - "1.22"
           - "1.23"
 
     steps:
@@ -40,9 +39,9 @@ jobs:
 
     - name: Install dependencies
       run: |
-        go install github.com/kisielk/errcheck@v1.8.0
+        go install github.com/kisielk/errcheck@latest
         go install github.com/mdempsky/unconvert@latest
-        go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
+        go install honnef.co/go/tools/cmd/staticcheck@latest
         go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
 
     - name: Build
