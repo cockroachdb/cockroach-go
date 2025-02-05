@@ -52,7 +52,7 @@ func TestExecuteCtx(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			limitedCtx := WithMaxRetries(ctx, tc.maxRetries)
-			err := ExecuteCtx(limitedCtx, func() error {
+			err := ExecuteCtx(limitedCtx, func(ctx context.Context) error {
 				_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES ($1)`, tc.id)
 				return err
 			})

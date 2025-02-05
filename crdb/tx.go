@@ -132,10 +132,10 @@ func Execute(fn func() error) (err error) {
 //	    // ...
 //	    return nil
 //	})
-func ExecuteCtx(ctx context.Context, fn func() error) (err error) {
+func ExecuteCtx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
 	maxRetries := numRetriesFromContext(ctx)
 	for n := 0; n <= maxRetries; n++ {
-		err = fn()
+		err = fn(ctx)
 		if err == nil || !errIsRetryable(err) {
 			return err
 		}
