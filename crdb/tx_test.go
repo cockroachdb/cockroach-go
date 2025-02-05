@@ -17,6 +17,7 @@ package crdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -24,8 +25,7 @@ import (
 )
 
 // TestExecuteCtx verifies that ExecuteCtx correctly handles different retry limits
-// when executing database operations. It tests both successful operations and
-// retry behavior.
+// and context cancellation when executing database operations.
 //
 // TODO(seanc@): Add test cases that force retryable errors by simulating
 // transaction conflicts or network failures. Consider using the same write skew
@@ -44,20 +44,43 @@ func TestExecuteCtx(t *testing.T) {
 		name       string
 		maxRetries int
 		id         int
+		withCancel bool
+		wantErr    error
 	}{
-		{"no retries", 0, 0},
-		{"single retry", 1, 1},
+		{"no retries", 0, 0, false, nil},
+		{"single retry", 1, 1, false, nil},
+		{"cancelled context", 1, 2, true, context.Canceled},
+		{"no args", 1, 3, false, nil},
+	}
+
+	fn := func(ctx context.Context, args ...interface{}) error {
+		if len(args) == 0 {
+			_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES (3)`)
+			return err
+		}
+		id := args[0].(int)
+		_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES ($1)`, id)
+		return err
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			limitedCtx := WithMaxRetries(ctx, tc.maxRetries)
-			err := ExecuteCtx(limitedCtx, func(ctx context.Context) error {
-				_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES ($1)`, tc.id)
-				return err
-			})
-			if err != nil {
-				t.Errorf("expected success with retry limit %d, got: %v", tc.maxRetries, err)
+			if tc.withCancel {
+				var cancel context.CancelFunc
+				limitedCtx, cancel = context.WithCancel(limitedCtx)
+				cancel()
+			}
+
+			var err error
+			if tc.name == "no args" {
+				err = ExecuteCtx(limitedCtx, fn)
+			} else {
+				err = ExecuteCtx(limitedCtx, fn, tc.id)
+			}
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("got error %v, want %v", err, tc.wantErr)
 			}
 		})
 	}

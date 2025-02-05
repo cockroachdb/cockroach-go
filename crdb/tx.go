@@ -100,15 +100,24 @@ func Execute(fn func() error) (err error) {
 	}
 }
 
+// ExecuteCtxFunc represents a function that takes a context and variadic
+// arguments and returns an error. It's used with ExecuteCtx to enable retryable
+// operations with configurable parameters.
+type ExecuteCtxFunc func(context.Context, ...interface{}) error
+
 // ExecuteCtx runs fn and retries it as needed, respecting a maximum retry count
 // obtained from the context. It is used to add configurable retry handling to
 // the execution of a single statement. If a multi-statement transaction is
 // being run, use ExecuteTx instead.
 //
 // The maximum number of retries can be configured using WithMaxRetries(ctx, n).
-// If the number of retries is exhausted and the last attempt resulted in a
-// retryable error, ExecuteCtx returns a max retries exceeded error wrapping
-// the last retryable error encountered.
+// Setting n=0 allows one attempt with no retries. If the number of retries is
+// exhausted and the last attempt resulted in a retryable error, ExecuteCtx
+// returns a max retries exceeded error wrapping the last retryable error
+// encountered.
+//
+// The fn parameter accepts variadic arguments which are passed through on each
+// retry attempt, allowing for flexible parameterization of the retried operation.
 //
 // As with Execute, retry handling for individual statements (implicit transactions)
 // is usually performed automatically on the CockroachDB SQL gateway, making use
@@ -123,19 +132,24 @@ func Execute(fn func() error) (err error) {
 // `Cause() error` (github.com/pkg/errors) or `Unwrap() error` (Go 1.13+).
 // For example:
 //
-//	crdb.ExecuteCtx(ctx, func () error {
-//	    rows, err := db.QueryContext(ctx, "SELECT ...")
+//	crdb.ExecuteCtx(ctx, func(ctx context.Context, args ...interface{}) error {
+//	    id := args[0].(int)
+//	    rows, err := db.QueryContext(ctx, "SELECT * FROM users WHERE id = $1", id)
 //	    if err != nil {
 //	        return fmt.Errorf("scanning row: %w", err) // uses %w for proper error wrapping
 //	    }
 //	    defer rows.Close()
 //	    // ...
 //	    return nil
-//	})
-func ExecuteCtx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
+//	}, userID)
+func ExecuteCtx(ctx context.Context, fn ExecuteCtxFunc, args ...interface{}) (err error) {
 	maxRetries := numRetriesFromContext(ctx)
 	for n := 0; n <= maxRetries; n++ {
-		err = fn(ctx)
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+
+		err = fn(ctx, args...)
 		if err == nil || !errIsRetryable(err) {
 			return err
 		}
