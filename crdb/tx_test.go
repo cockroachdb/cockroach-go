@@ -23,6 +23,46 @@ import (
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
+// TestExecuteCtx verifies that ExecuteCtx correctly handles different retry limits
+// when executing database operations. It tests both successful operations and
+// retry behavior.
+//
+// TODO(seanc@): Add test cases that force retryable errors by simulating
+// transaction conflicts or network failures. Consider using the same write skew
+// pattern from TestExecuteTx.
+func TestExecuteCtx(t *testing.T) {
+	db, stop := testserver.NewDBForTest(t)
+	defer stop()
+	ctx := context.Background()
+
+	// Setup test table
+	if _, err := db.ExecContext(ctx, `CREATE TABLE test_retry (id INT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+
+	testCases := []struct {
+		name       string
+		maxRetries int
+		id         int
+	}{
+		{"no retries", 0, 0},
+		{"single retry", 1, 1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			limitedCtx := WithMaxRetries(ctx, tc.maxRetries)
+			err := ExecuteCtx(limitedCtx, func() error {
+				_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES ($1)`, tc.id)
+				return err
+			})
+			if err != nil {
+				t.Errorf("expected success with retry limit %d, got: %v", tc.maxRetries, err)
+			}
+		})
+	}
+}
+
 // TestExecuteTx verifies transaction retry using the classic
 // example of write skew in bank account balance transfers.
 func TestExecuteTx(t *testing.T) {
