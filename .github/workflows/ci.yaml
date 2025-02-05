@@ -40,8 +40,6 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # The latest crlfmt requires go1.19.
-        go install github.com/cockroachdb/crlfmt@v0.1.0
         go install github.com/kisielk/errcheck@v1.7.0
         go install github.com/mdempsky/unconvert@latest
         go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
