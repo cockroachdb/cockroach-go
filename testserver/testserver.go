@@ -760,28 +760,33 @@ func (ts *testServerImpl) WaitForInit() error {
 }
 
 func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
+	log.Printf("node %d: waiting for listening URL file %q\n", nodeNum, ts.nodes[nodeNum].listeningURLFile)
 	var data []byte
+	var err error
 	for i := 0; i < ts.serverArgs.pollListenURLTimeoutSeconds*10; i++ {
 		ts.mu.RLock()
 		state := ts.nodes[nodeNum].state
 		ts.mu.RUnlock()
 		if state != stateRunning {
-			return fmt.Errorf("server stopped or crashed before listening URL file was available")
+			return fmt.Errorf("node %d stopped or crashed before listening URL file was available", nodeNum)
 		}
-		var err error
 		data, err = os.ReadFile(ts.nodes[nodeNum].listeningURLFile)
-		if len(data) == 0 {
-			time.Sleep(100 * time.Millisecond)
-			continue
-		} else if err == nil {
+		if err == nil && len(data) > 0 {
 			break
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error while reading listening URL file: %w", err)
 		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("node %d: unexpected error while reading listening URL file %q: %w", nodeNum, ts.nodes[nodeNum].listeningURLFile, err)
+		}
+
+		time.Sleep(100 * time.Millisecond)
 	}
 
+	if err != nil {
+		// This must be a "not exist" error.
+		return fmt.Errorf("node %d: file %q did not show up afer %d seconds", nodeNum, ts.nodes[nodeNum].listeningURLFile, ts.serverArgs.pollListenURLTimeoutSeconds)
+	}
 	if len(data) == 0 {
-		panic("empty connection string")
+		return fmt.Errorf("node %d: listening URL file %q is empty", nodeNum, ts.nodes[nodeNum].listeningURLFile)
 	}
 
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
