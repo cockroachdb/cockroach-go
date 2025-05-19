@@ -148,13 +148,12 @@ func (ts *testServerImpl) StartNode(i int) error {
 	capturedI := i
 
 	if ts.pgURL[capturedI].u == nil {
-		go func() {
-			if err := ts.pollListeningURLFile(capturedI); err != nil {
-				log.Printf("%s failed to poll listening URL file: %v", testserverMessagePrefix, err)
-				close(ts.pgURL[capturedI].set)
-				ts.Stop()
-			}
-		}()
+		if err := ts.pollListeningURLFile(capturedI); err != nil {
+			log.Printf("%s failed to poll listening URL file: %v", testserverMessagePrefix, err)
+			close(ts.pgURL[capturedI].set)
+			ts.Stop()
+			return err
+		}
 	}
 
 	return nil

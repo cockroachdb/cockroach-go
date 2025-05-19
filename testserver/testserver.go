@@ -760,34 +760,44 @@ func (ts *testServerImpl) WaitForInit() error {
 }
 
 func (ts *testServerImpl) pollListeningURLFile(nodeNum int) error {
+	log.Printf("node %d: waiting for listening URL file %q\n", nodeNum, ts.nodes[nodeNum].listeningURLFile)
 	var data []byte
-	for i := 0; i < ts.serverArgs.pollListenURLTimeoutSeconds*10; i++ {
+	var err error
+	maxWait := time.Duration(ts.serverArgs.pollListenURLTimeoutSeconds) * time.Second
+	for startTime := time.Now(); ; {
 		ts.mu.RLock()
 		state := ts.nodes[nodeNum].state
 		ts.mu.RUnlock()
 		if state != stateRunning {
-			return fmt.Errorf("server stopped or crashed before listening URL file was available")
+			return fmt.Errorf("node %d stopped or crashed before listening URL file was available", nodeNum)
 		}
-		var err error
 		data, err = os.ReadFile(ts.nodes[nodeNum].listeningURLFile)
-		if len(data) == 0 {
+		// There are two cases where we want to retry:
+		//  - the file does not exist yet.
+		//  - the file exists but it is empty (we probably raced with the file being written).
+		if (os.IsNotExist(err) || (err == nil && len(data) == 0)) && time.Since(startTime) < maxWait {
 			time.Sleep(100 * time.Millisecond)
 			continue
-		} else if err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("unexpected error while reading listening URL file: %w", err)
 		}
+		break
 	}
 
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("node %d: unexpected error while reading listening URL file %q: %w", nodeNum, ts.nodes[nodeNum].listeningURLFile, err)
+		}
+		return fmt.Errorf("node %d: file %q did not show up afer %d seconds", nodeNum, ts.nodes[nodeNum].listeningURLFile, ts.serverArgs.pollListenURLTimeoutSeconds)
+	}
 	if len(data) == 0 {
-		panic("empty connection string")
+		return fmt.Errorf("node %d: listening URL file %q is empty", nodeNum, ts.nodes[nodeNum].listeningURLFile)
 	}
 
 	u, err := url.Parse(string(bytes.TrimSpace(data)))
 	if err != nil {
 		return fmt.Errorf("failed to parse SQL URL: %w", err)
 	}
+	log.Printf("node %d: got URL %s\n", nodeNum, u)
+
 	ts.pgURL[nodeNum].orig = *u
 	if pw := ts.serverArgs.rootPW; pw != "" {
 		db, err := sql.Open("postgres", u.String())
