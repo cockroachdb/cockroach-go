@@ -93,7 +93,7 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 	}
 
 	secureFlag := "--insecure"
-	certsDir := filepath.Join(ts.baseDir, "certs")
+	certsDir := filepath.Join(ts.BaseDir(), "certs")
 	if ts.serverArgs.secure {
 		secureFlag = "--certs-dir=" + certsDir
 		// Create tenant client certificate.
@@ -235,8 +235,8 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 			// TODO(asubiotto): Specify listeningURLFile once we support dynamic
 			//  ports.
 			listeningURLFile: "",
-			stdout:           filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
-			stderr:           filepath.Join(ts.baseDir, logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
+			stdout:           filepath.Join(ts.BaseDir(), logsDirName, fmt.Sprintf("cockroach.tenant.%d.stdout", tenantID)),
+			stderr:           filepath.Join(ts.BaseDir(), logsDirName, fmt.Sprintf("cockroach.tenant.%d.stderr", tenantID)),
 		},
 	}
 
@@ -244,7 +244,6 @@ func (ts *testServerImpl) NewTenantServer(proxy bool) (TestServer, error) {
 		serverArgs:  ts.serverArgs,
 		version:     ts.version,
 		serverState: stateNew,
-		baseDir:     ts.baseDir,
 		nodes:       nodes,
 	}
 

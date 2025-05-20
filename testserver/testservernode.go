@@ -102,7 +102,7 @@ func (ts *testServerImpl) StartNode(i int) error {
 	// Set the working directory of the cockroach process to our temp folder.
 	// This stops cockroach from polluting the project directory with _dump
 	// folders.
-	currCmd.Dir = ts.baseDir
+	currCmd.Dir = ts.BaseDir()
 
 	if len(ts.nodes[i].stdout) > 0 {
 		wr, err := newFileLogWriter(ts.nodes[i].stdout)
