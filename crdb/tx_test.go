@@ -101,13 +101,48 @@ func TestExecuteTx(t *testing.T) {
 // TestConfigureRetries verifies that the number of retries can be specified
 // via context.
 func TestConfigureRetries(t *testing.T) {
-	ctx := context.Background()
-	if numRetriesFromContext(ctx) != defaultRetries {
-		t.Fatal("expect default number of retries")
-	}
+	ctx := WithMaxRetries(context.Background(), 0)
+	requireRetries(t, ctx, 0)
+
+	ctx = WithMaxRetries(context.Background(), 1)
+	requireRetries(t, ctx, 1)
+
+	ctx = context.Background()
+	requireRetries(t, ctx, defaultRetries)
+
 	ctx = WithMaxRetries(context.Background(), 123+defaultRetries)
-	if numRetriesFromContext(ctx) != defaultRetries+123 {
-		t.Fatal("expected default+123 retires")
+	requireRetries(t, ctx, 123+defaultRetries)
+
+	ctx = WithRetryPolicy(context.Background(), &ExpBackoffRetryPolicy{
+		RetryLimit: 10,
+		BaseDelay:  10,
+		MaxDelay:   1000,
+	})
+	requireRetries(t, ctx, 10)
+}
+
+func requireRetries(t *testing.T, ctx context.Context, numRetries int) {
+	p := getRetryPolicy(ctx)
+	if p == nil {
+		t.Fatal("expected non-nil retry policy")
+	}
+
+	rf := p.NewRetry()
+	tryCount := 0
+	for {
+		// we try
+		tryCount++
+
+		// Then, decide whether we're out of retries.
+		// The first try is not a retry, so we should
+		_, err := rf(nil)
+		if err != nil {
+			retryCount := tryCount - 1
+			if retryCount != numRetries {
+				t.Fatalf("expected %d retries, got %d", numRetries, retryCount)
+			}
+			return
+		}
 	}
 }
 
