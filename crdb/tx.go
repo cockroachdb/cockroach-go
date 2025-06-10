@@ -278,7 +278,7 @@ func (tx stdlibTxnAdapter) Commit(context.Context) error {
 	return tx.tx.Commit()
 }
 
-// Commit is part of the tx interface.
+// Rollback is part of the tx interface.
 func (tx stdlibTxnAdapter) Rollback(context.Context) error {
 	return tx.tx.Rollback()
 }
