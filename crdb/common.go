@@ -14,7 +14,10 @@
 
 package crdb
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Tx abstracts the operations needed by ExecuteInTx so that different
 // frameworks (e.g. go's sql package, pgx, gorm) can be used with ExecuteInTx.
@@ -60,8 +63,10 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 		return err
 	}
 
-	maxRetries := numRetriesFromContext(ctx)
-	retryCount := 0
+	// establish the retry policy
+	retryPolicy := getRetryPolicy(ctx)
+	// set up the retry policy state
+	retryFunc := retryPolicy.NewRetry()
 	for {
 		releaseFailed := false
 		err = fn()
@@ -82,13 +87,35 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 			return err
 		}
 
-		if rollbackErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); rollbackErr != nil {
-			return newTxnRestartError(rollbackErr, err)
+		// We have a retryable error. Check the retry policy.
+		delay, retryErr := retryFunc(err)
+		if delay > 0 && retryErr == nil {
+			// We don't want to hold locks while waiting for a backoff, so restart the entire transaction
+			if restartErr := tx.Exec(ctx, "ROLLBACK"); restartErr != nil {
+				return newTxnRestartError(restartErr, err)
+			}
+			if restartErr := tx.Exec(ctx, "BEGIN"); restartErr != nil {
+				return newTxnRestartError(restartErr, err)
+			}
+			if restartErr := tx.Exec(ctx, "SAVEPOINT cockroach_restart"); restartErr != nil {
+				return newTxnRestartError(restartErr, err)
+			}
+		} else {
+			if rollbackErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT cockroach_restart"); rollbackErr != nil {
+				return newTxnRestartError(rollbackErr, err)
+			}
 		}
 
-		retryCount++
-		if maxRetries > 0 && retryCount > maxRetries {
-			return newMaxRetriesExceededError(err, maxRetries)
+		if retryErr != nil {
+			return retryErr
+		}
+
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 }
