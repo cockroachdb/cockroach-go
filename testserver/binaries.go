@@ -403,7 +403,6 @@ func downloadBinaryFromTar(response *http.Response, output *os.File, filePath st
 		}
 
 	}
-	return nil
 }
 
 // downloadBinaryFromZip writes the binary compressed in a zip from a http response
