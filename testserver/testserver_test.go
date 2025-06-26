@@ -234,6 +234,22 @@ func TestRunServer(t *testing.T) {
 				)
 			},
 		},
+		{
+			name: "Demo mode",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t,
+					testserver.DemoModeOpt(),
+				)
+			},
+		},
+		{
+			name: "Demo mode 3-node",
+			instantiation: func(t *testing.T) (*sql.DB, func()) {
+				return testserver.NewDBForTest(t, testserver.ThreeNodeOpt(),
+					testserver.DemoModeOpt(),
+				)
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, stop := tc.instantiation(t)
