@@ -51,6 +51,12 @@ func (ts *testServerImpl) StopNode(nodeNum int) error {
 	return nil
 }
 
+type blockForeverReader struct{}
+
+func (blockForeverReader) Read(p []byte) (int, error) {
+	select {} // block forever
+}
+
 func (ts *testServerImpl) StartNode(i int) error {
 	ts.mu.RLock()
 	if ts.nodes[i].state == stateRunning {
@@ -121,6 +127,10 @@ func (ts *testServerImpl) StartNode(i int) error {
 		ts.nodes[i].stderrBuf = wr
 	}
 	currCmd.Stderr = ts.nodes[i].stderrBuf
+
+	if ts.serverArgs.demoMode {
+		currCmd.Stdin = blockForeverReader{}
+	}
 
 	for k, v := range defaultEnv() {
 		currCmd.Env = append(currCmd.Env, k+"="+v)
