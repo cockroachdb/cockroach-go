@@ -70,9 +70,9 @@ const (
 )
 
 const (
-	// First tenant ID to use is 2 since 1 belongs to the system tenant. Refer
+	// First tenant ID to use is 3 since 1 belongs to the system tenant and 2 will be used for UA migration. Refer
 	// to NewTenantServer for more information.
-	firstTenantID = 2
+	firstTenantID = 3
 )
 
 // By default, we allocate 20% of available memory to the test server.
