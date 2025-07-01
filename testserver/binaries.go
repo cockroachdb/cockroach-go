@@ -440,7 +440,8 @@ func downloadBinaryFromTar(response *http.Response, output *os.File, filePath st
 		}
 
 	}
-	return nil
+	// Unreachable, but left present for safety in case later changes make this branch reachable again.
+	return fmt.Errorf("could not find cockroach binary in archive")
 }
 
 // downloadBinaryFromZip writes the binary compressed in a zip from a http response

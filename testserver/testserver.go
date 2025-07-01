@@ -243,6 +243,7 @@ type testServerArgs struct {
 	envVars                     []string // to be passed to cmd.Env
 	localityFlags               []string
 	cockroachLogsDir            string
+	demoMode                    bool // run in "demo" mode
 }
 
 // CockroachBinaryPathOpt is a TestServer option that can be passed to
@@ -430,6 +431,12 @@ func CockroachLogsDirOpt(dir string) TestServerOpt {
 	}
 }
 
+func DemoModeOpt() TestServerOpt {
+	return func(args *testServerArgs) {
+		args.demoMode = true
+	}
+}
+
 const (
 	logsDirName  = "logs"
 	certsDirName = "certs"
@@ -559,12 +566,7 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		return nil, fmt.Errorf("%s failed to parse version: %w", testserverMessagePrefix, err)
 	}
 
-	startCmd := "start-single-node"
-	if !v.AtLeast(version.MustParse("v19.2.0-alpha")) || serverArgs.numNodes > 1 {
-		startCmd = "start"
-	}
-
-	nodes := make([]nodeInfo, serverArgs.numNodes)
+	var nodes []nodeInfo
 	if len(serverArgs.httpPorts) == 0 {
 		serverArgs.httpPorts = make([]int, serverArgs.numNodes)
 	}
@@ -573,60 +575,102 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.externalIODir = "disabled"
 	}
 
-	for i := 0; i < serverArgs.numNodes; i++ {
-		storeArg := fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
-		logsBaseDir := filepath.Join(serverArgs.cockroachLogsDir, strconv.Itoa(i))
-		nodeBaseDir, err := mkDir(strconv.Itoa(i))
+	if serverArgs.demoMode {
+		startCmd := "demo"
+		nodes = make([]nodeInfo, 1)
+		logsBaseDir := filepath.Join(serverArgs.cockroachLogsDir, "0")
+		nodeBaseDir, err := mkDir("0")
 		if err != nil {
 			return nil, err
 		}
-		if serverArgs.storeOnDisk {
-			storeArg = fmt.Sprintf("--store=path=%s", nodeBaseDir)
-		}
+
 		// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
 		// Should be done once issue #109 is solved:
 		// https://github.com/cockroachdb/cockroach-go/issues/109
-		nodes[i].stdout = filepath.Join(logsBaseDir, "cockroach.stdout")
-		nodes[i].stderr = filepath.Join(logsBaseDir, "cockroach.stderr")
-		nodes[i].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
-		nodes[i].state = stateNew
-		if serverArgs.numNodes > 1 {
-			nodes[i].startCmdArgs = []string{
-				serverArgs.cockroachBinary,
-				startCmd,
-				"--logtostderr",
-				secureOpt,
-				storeArg,
-				fmt.Sprintf(
-					"--listen-addr=%s:%d",
-					serverArgs.listenAddrHost,
-					serverArgs.listenAddrPorts[i],
-				),
-				fmt.Sprintf(
-					"--http-addr=%s:%d",
-					serverArgs.listenAddrHost,
-					serverArgs.httpPorts[i],
-				),
-				"--listening-url-file=" + nodes[i].listeningURLFile,
-				"--external-io-dir=" + serverArgs.externalIODir,
-			}
-		} else {
-			nodes[0].startCmdArgs = []string{
-				serverArgs.cockroachBinary,
-				startCmd,
-				"--logtostderr",
-				secureOpt,
-				fmt.Sprintf("--host=%s", serverArgs.listenAddrHost),
-				"--port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
-				"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
-				storeArg,
-				"--cache=" + strconv.FormatFloat(serverArgs.cacheSize, 'f', 4, 64),
-				"--listening-url-file=" + nodes[i].listeningURLFile,
-				"--external-io-dir=" + serverArgs.externalIODir,
-			}
+		nodes[0].stdout = filepath.Join(logsBaseDir, "cockroach.stdout")
+		nodes[0].stderr = filepath.Join(logsBaseDir, "cockroach.stderr")
+		nodes[0].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
+		nodes[0].state = stateNew
+
+		// Note the flags in demo mode are slightly different than single-node mode.
+		// There's no external-io-dir flag, --port becomes --sql-port, and --nodes exists.
+		nodes[0].startCmdArgs = []string{
+			serverArgs.cockroachBinary,
+			startCmd,
+			"--logtostderr",
+			secureOpt,
+			"--sql-port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
+			"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
+			"--cache=" + strconv.FormatFloat(serverArgs.cacheSize, 'f', 4, 64),
+			"--listening-url-file=" + nodes[0].listeningURLFile,
+			"--nodes=" + strconv.Itoa(serverArgs.numNodes),
 		}
-		if 0 < len(serverArgs.localityFlags) {
-			nodes[i].startCmdArgs = append(nodes[i].startCmdArgs, fmt.Sprintf("--locality=%s", serverArgs.localityFlags[i]))
+
+		if len(serverArgs.localityFlags) > 0 {
+			nodes[0].startCmdArgs = append(nodes[0].startCmdArgs, fmt.Sprintf("--demo-locality=%s", strings.Join(serverArgs.localityFlags, ":")))
+		}
+	} else {
+		startCmd := "start-single-node"
+		if !v.AtLeast(version.MustParse("v19.2.0-alpha")) || serverArgs.numNodes > 1 {
+			startCmd = "start"
+		}
+		nodes = make([]nodeInfo, serverArgs.numNodes)
+		for i := 0; i < serverArgs.numNodes; i++ {
+			storeArg := fmt.Sprintf("--store=type=mem,size=%.2f", serverArgs.storeMemSize)
+			logsBaseDir := filepath.Join(serverArgs.cockroachLogsDir, strconv.Itoa(i))
+			nodeBaseDir, err := mkDir(strconv.Itoa(i))
+			if err != nil {
+				return nil, err
+			}
+			if serverArgs.storeOnDisk {
+				storeArg = fmt.Sprintf("--store=path=%s", nodeBaseDir)
+			}
+
+			// TODO(janexing): Make sure the log is written to logDir instead of shown in console.
+			// Should be done once issue #109 is solved:
+			// https://github.com/cockroachdb/cockroach-go/issues/109
+			nodes[i].stdout = filepath.Join(logsBaseDir, "cockroach.stdout")
+			nodes[i].stderr = filepath.Join(logsBaseDir, "cockroach.stderr")
+			nodes[i].listeningURLFile = filepath.Join(nodeBaseDir, "listen-url")
+			nodes[i].state = stateNew
+			if serverArgs.numNodes > 1 {
+				nodes[i].startCmdArgs = []string{
+					serverArgs.cockroachBinary,
+					startCmd,
+					"--logtostderr",
+					secureOpt,
+					storeArg,
+					fmt.Sprintf(
+						"--listen-addr=%s:%d",
+						serverArgs.listenAddrHost,
+						serverArgs.listenAddrPorts[i],
+					),
+					fmt.Sprintf(
+						"--http-addr=%s:%d",
+						serverArgs.listenAddrHost,
+						serverArgs.httpPorts[i],
+					),
+					"--listening-url-file=" + nodes[i].listeningURLFile,
+					"--external-io-dir=" + serverArgs.externalIODir,
+				}
+			} else {
+				nodes[0].startCmdArgs = []string{
+					serverArgs.cockroachBinary,
+					startCmd,
+					"--logtostderr",
+					secureOpt,
+					fmt.Sprintf("--host=%s", serverArgs.listenAddrHost),
+					"--port=" + strconv.Itoa(serverArgs.listenAddrPorts[0]),
+					"--http-port=" + strconv.Itoa(serverArgs.httpPorts[0]),
+					storeArg,
+					"--cache=" + strconv.FormatFloat(serverArgs.cacheSize, 'f', 4, 64),
+					"--listening-url-file=" + nodes[i].listeningURLFile,
+					"--external-io-dir=" + serverArgs.externalIODir,
+				}
+			}
+			if len(serverArgs.localityFlags) > 0 {
+				nodes[i].startCmdArgs = append(nodes[i].startCmdArgs, fmt.Sprintf("--locality=%s", serverArgs.localityFlags[i]))
+			}
 		}
 	}
 
@@ -636,11 +680,6 @@ func NewTestServer(opts ...TestServerOpt) (TestServer, error) {
 		serverArgs.cockroachBinary,
 		"init",
 		secureOpt,
-	}
-
-	states := make([]int, serverArgs.numNodes)
-	for i := 0; i < serverArgs.numNodes; i++ {
-		states[i] = stateNew
 	}
 
 	ts := &testServerImpl{
@@ -844,13 +883,13 @@ func (ts *testServerImpl) Start() error {
 	ts.serverState = stateRunning
 	ts.mu.Unlock()
 
-	for i := 0; i < ts.serverArgs.numNodes; i++ {
+	for i := 0; i < len(ts.nodes); i++ {
 		if err := ts.StartNode(i); err != nil {
 			return err
 		}
 	}
 
-	if ts.serverArgs.numNodes > 1 {
+	if ts.serverArgs.numNodes > 1 && !ts.serverArgs.demoMode {
 		err := ts.CockroachInit()
 		if err != nil {
 			return err
