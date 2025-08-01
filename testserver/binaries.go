@@ -26,10 +26,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -41,8 +39,8 @@ import (
 
 const (
 	latestSuffix     = "LATEST"
-	finishedFileMode = 0555
-	writingFileMode  = 0600 // Allow reads so that another process can check if there's a flock.
+	finishedFileMode = 0o555
+	writingFileMode  = 0o600 // Allow reads so that another process can check if there's a flock.
 )
 
 const (
@@ -58,31 +56,34 @@ const (
 // for testing purposes.
 const releaseDataURL = "https://raw.githubusercontent.com/cockroachdb/docs/main/src/current/_data/releases.yml"
 
-var muslRE = regexp.MustCompile(`(?i)\bmusl\b`)
-
 // GetDownloadURL returns the URL of a CRDB download. It creates the URL for
 // downloading a CRDB binary for current runtime OS. If desiredVersion is
 // specified, it will return the URL of the specified version. Otherwise, it
 // will return the URL of the latest stable cockroach binary. If nonStable is
 // true, the latest cockroach binary will be used.
 func GetDownloadURL(desiredVersion string, nonStable bool) (string, string, error) {
-	goos := runtime.GOOS
-	if goos == "linux" {
-		goos += func() string {
-			// Detect which C library is present on the system. See
-			// https://unix.stackexchange.com/a/120381.
-			cmd := exec.Command("ldd", "--version")
-			out, err := cmd.Output()
-			if err != nil {
-				log.Printf("%s: %s: out=%q err=%v", testserverMessagePrefix, cmd.Args, out, err)
-			} else if muslRE.Match(out) {
-				return "-musl"
-			}
-			return "-gnu"
-		}()
+	return GetDownloadURLWithPlatform(desiredVersion, nonStable, runtime.GOOS, runtime.GOARCH)
+}
+
+// GetDownloadURLWithPlatform returns the URL of a CRDB download for the specified
+// platform and architecture. If desiredVersion is specified, it will return the URL
+// of the specified version. Otherwise, it will return the URL of the latest stable
+// cockroach binary. If nonStable is true, the latest cockroach binary will be used.
+func GetDownloadURLWithPlatform(
+	desiredVersion string, nonStable bool, goos, goarch string,
+) (string, string, error) {
+	targetGoos := goos
+	if targetGoos == "linux" {
+		targetGoos += "-gnu"
 	}
-	binaryName := fmt.Sprintf("cockroach.%s-%s", goos, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
+	// For unstable builds, macOS ARM64 binaries have ".unsigned" at the end
+	var binaryName string
+	if nonStable && goos == "darwin" && goarch == "arm64" {
+		binaryName = fmt.Sprintf("cockroach.%s-%s.unsigned", targetGoos, goarch)
+	} else {
+		binaryName = fmt.Sprintf("cockroach.%s-%s", targetGoos, goarch)
+	}
+	if goos == "windows" {
 		binaryName += ".exe"
 	}
 
@@ -90,7 +91,7 @@ func GetDownloadURL(desiredVersion string, nonStable bool) (string, string, erro
 	var err error
 
 	if desiredVersion != "" {
-		dbUrl = getDownloadUrlForVersion(desiredVersion)
+		dbUrl = getDownloadUrlForVersionWithPlatform(desiredVersion, goos, goarch)
 	} else if nonStable {
 		// For the latest (beta) CRDB, we use the `edge-binaries.cockroachdb.com` host.
 		u := &url.URL{
@@ -137,16 +138,46 @@ func DownloadFromURL(downloadURL string) (*http.Response, error) {
 // To download the latest STABLE version of CRDB, set `nonStable` to false.
 // To download the bleeding edge version of CRDB, set `nonStable` to true.
 func DownloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (string, error) {
-	dbUrl, desiredVersion, err := GetDownloadURL(desiredVersion, nonStable)
+	return DownloadBinaryWithPlatform(tc, desiredVersion, nonStable, runtime.GOOS, runtime.GOARCH, "")
+}
+
+// DownloadBinaryWithPlatform saves the specified version of CRDB for the given
+// platform and architecture into a local binary file, and returns the path for
+// this local binary.
+// To download a specific cockroach version, specify desiredVersion. Otherwise,
+// the latest stable or non-stable version will be chosen.
+// To download the latest STABLE version of CRDB, set `nonStable` to false.
+// To download the bleeding edge version of CRDB, set `nonStable` to true.
+// If outputDir is specified, the binary will be saved there, otherwise to temp directory.
+func DownloadBinaryWithPlatform(
+	tc *TestConfig, desiredVersion string, nonStable bool, goos, goarch, outputDir string,
+) (string, error) {
+	dbUrl, desiredVersion, err := GetDownloadURLWithPlatform(desiredVersion, nonStable, goos, goarch)
 	if err != nil {
 		return "", err
 	}
 
-	filename, err := GetDownloadFilename(desiredVersion)
+	// For unstable builds, use "latest" as the version for filename generation
+	filenameVersion := desiredVersion
+	if nonStable && desiredVersion == "" {
+		filenameVersion = "latest"
+	}
+
+	filename, err := GetDownloadFilenameWithPlatform(filenameVersion, goos)
 	if err != nil {
 		return "", err
 	}
-	localFile := filepath.Join(os.TempDir(), filename)
+
+	var localFile string
+	if outputDir != "" {
+		// Create output directory if it doesn't exist
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return "", fmt.Errorf("failed to create output directory %s: %w", outputDir, err)
+		}
+		localFile = filepath.Join(outputDir, filename)
+	} else {
+		localFile = filepath.Join(os.TempDir(), filename)
+	}
 
 	// Short circuit if the file already exists and is in the finished state.
 	info, err := os.Stat(localFile)
@@ -224,7 +255,7 @@ func DownloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (stri
 	if nonStable {
 		downloadMethod = downloadBinaryFromResponse
 	} else {
-		if runtime.GOOS == "windows" {
+		if goos == "windows" {
 			downloadMethod = downloadBinaryFromZip
 		} else {
 			downloadMethod = downloadBinaryFromTar
@@ -253,8 +284,14 @@ func DownloadBinary(tc *TestConfig, desiredVersion string, nonStable bool) (stri
 
 // GetDownloadFilename returns the local filename of the downloaded CRDB binary file.
 func GetDownloadFilename(desiredVersion string) (string, error) {
+	return GetDownloadFilenameWithPlatform(desiredVersion, runtime.GOOS)
+}
+
+// GetDownloadFilenameWithPlatform returns the local filename of the downloaded CRDB binary file
+// for the specified platform.
+func GetDownloadFilenameWithPlatform(desiredVersion, goos string) (string, error) {
 	filename := fmt.Sprintf("cockroach-%s", desiredVersion)
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		filename += ".exe"
 	}
 	return filename, nil
@@ -320,28 +357,28 @@ func getLatestStableVersionInfo() (string, string, error) {
 		}
 	}
 
-	downloadUrl := getDownloadUrlForVersion(latestStableVersion.String())
+	downloadUrl := getDownloadUrlForVersionWithPlatform(latestStableVersion.String(), runtime.GOOS, runtime.GOARCH)
 
 	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion.String(), ".", "-")
 	return downloadUrl, latestStableVerFormatted, nil
 }
 
-func getDownloadUrlForVersion(version string) string {
-	switch runtime.GOOS {
+func getDownloadUrlForVersionWithPlatform(version, goos, goarch string) string {
+	switch goos {
 	case "linux":
-		return fmt.Sprintf(linuxUrlpat, version, runtime.GOARCH)
+		return fmt.Sprintf(linuxUrlpat, version, goarch)
 	case "darwin":
-		switch runtime.GOARCH {
+		switch goarch {
 		case "arm64":
-			return fmt.Sprintf(macUrlpat, version, "11.0", runtime.GOARCH)
+			return fmt.Sprintf(macUrlpat, version, "11.0", goarch)
 		case "amd64":
-			return fmt.Sprintf(macUrlpat, version, "10.9", runtime.GOARCH)
+			return fmt.Sprintf(macUrlpat, version, "10.9", goarch)
 		}
 	case "windows":
 		return fmt.Sprintf(winUrlpat, version)
 	}
 
-	panic(errors.New("could not get supported go os version"))
+	panic(fmt.Errorf("unsupported platform/architecture combination: %s-%s", goos, goarch))
 }
 
 // downloadBinaryFromResponse copies the http response's body directly into a local binary.
@@ -403,7 +440,8 @@ func downloadBinaryFromTar(response *http.Response, output *os.File, filePath st
 		}
 
 	}
-	return nil
+	// Unreachable, but left present for safety in case later changes make this branch reachable again.
+	return fmt.Errorf("could not find cockroach binary in archive")
 }
 
 // downloadBinaryFromZip writes the binary compressed in a zip from a http response
