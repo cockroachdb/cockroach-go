@@ -103,7 +103,6 @@ func (ts *testServerImpl) StartNode(i int) error {
 		"COCKROACH_MAX_OFFSET=1ns",
 		"COCKROACH_TRUST_CLIENT_PROVIDED_SQL_REMOTE_ADDR=true",
 	}
-	currCmd.Env = append(currCmd.Env, ts.serverArgs.envVars...)
 
 	// Set the working directory of the cockroach process to our temp folder.
 	// This stops cockroach from polluting the project directory with _dump
@@ -134,6 +133,19 @@ func (ts *testServerImpl) StartNode(i int) error {
 
 	for k, v := range defaultEnv() {
 		currCmd.Env = append(currCmd.Env, k+"="+v)
+	}
+	// Allow caller-provided environment variables to override defaults.
+	currCmd.Env = append(currCmd.Env, ts.serverArgs.envVars...)
+	// For demo clusters, force HOME into a sandbox-writable directory under
+	// the testserver temp dir so that demo's ~/.cockroach-demo sockets work
+	// in sandboxed environments.
+	if ts.serverArgs.demoMode {
+		// Prefer a very short path to stay under Unix-domain socket length limits.
+		demoHome, err := os.MkdirTemp("/tmp", "cockroach-demo-*")
+		if err != nil {
+			return fmt.Errorf("unable to create demo HOME directory %s: %w", demoHome, err)
+		}
+		currCmd.Env = append(currCmd.Env, "HOME="+demoHome)
 	}
 
 	log.Printf("executing: %s", currCmd)
