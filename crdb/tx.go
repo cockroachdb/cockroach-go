@@ -174,11 +174,55 @@ func ExecuteCtx(ctx context.Context, fn ExecuteCtxFunc, args ...interface{}) (er
 
 type txConfigKey struct{}
 
-// WithMaxRetries configures context so that ExecuteTx retries tx specified
-// number of times when encountering retryable errors.
-// Setting retries to 0 will not retry: the transaction will be tried only once.
+// WithMaxRetries configures context so that ExecuteTx retries the transaction
+// up to the specified number of times when encountering retryable errors.
+//
+// The retries parameter controls retry behavior:
+//   - Positive value (e.g., 10): Retry up to that many times before failing
+//   - 0 (UnlimitedRetries): Retry indefinitely until success or non-retryable error
+//     (not recommended in production as it can lead to infinite retry loops)
+//
+// This is a convenience function that creates a LimitBackoffRetryPolicy with
+// no delay between retries (immediate retries).
+//
+// Example with limited retries:
+//
+//	ctx := crdb.WithMaxRetries(context.Background(), 10)
+//	err := crdb.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error {
+//	    // Will retry up to 10 times on retryable errors
+//	    return tx.ExecContext(ctx, "UPDATE ...")
+//	})
+//
+// Example with unlimited retries (use with caution):
+//
+//	ctx := crdb.WithMaxRetries(context.Background(), 0)
+//	// Will retry indefinitely - ensure you have a context timeout!
+//
+// To disable retries entirely, use WithNoRetries(ctx) instead.
 func WithMaxRetries(ctx context.Context, retries int) context.Context {
 	p := &LimitBackoffRetryPolicy{retries, 0}
+	return WithRetryPolicy(ctx, p)
+}
+
+// WithNoRetries configures context so that ExecuteTx will not retry on
+// retryable errors. The transaction will be attempted exactly once.
+//
+// This is useful when you want to handle retries manually or when operating
+// in a context where automatic retries are not desired (e.g., in testing,
+// or when implementing custom retry logic).
+//
+// Example usage:
+//
+//	ctx := crdb.WithNoRetries(context.Background())
+//	err := crdb.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error {
+//	    // This will execute only once, no automatic retries
+//	    return tx.ExecContext(ctx, "UPDATE ...")
+//	})
+//	if err != nil {
+//	    // Handle error manually, potentially implementing custom retry logic
+//	}
+func WithNoRetries(ctx context.Context) context.Context {
+	p := &LimitBackoffRetryPolicy{NoRetries, 0}
 	return WithRetryPolicy(ctx, p)
 }
 

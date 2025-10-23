@@ -89,8 +89,21 @@ func ExecuteInTx(ctx context.Context, tx Tx, fn func() error) (err error) {
 
 		// We have a retryable error. Check the retry policy.
 		delay, retryErr := retryFunc(err)
+		// Check if the context has been cancelled
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if delay > 0 && retryErr == nil {
-			// We don't want to hold locks while waiting for a backoff, so restart the entire transaction
+			// When backoff is needed, we don't want to hold locks while waiting for a backoff,
+			// so restart the entire transaction:
+			// 	- tx.Exec(ctx, "ROLLBACK") sends SQL to the server:
+			//    it doesn't call tx.Rollback() (which would close the Go sql.Tx object)
+			//  - The underlying connection remains open: the *sql.Tx wrapper maintains the database connection.
+			//    Only the server-side transaction is rolled back.
+			//  - tx.Exec(ctx, "BEGIN") starts a new server-side transaction on the same connection wrapped by the
+			//    same *sql.Tx object
+			//  - The defer handles cleanup - It calls tx.Rollback() (the Go method) only on errors,
+			//    which closes the Go object and returns the connection to the pool
 			if restartErr := tx.Exec(ctx, "ROLLBACK"); restartErr != nil {
 				return newTxnRestartError(restartErr, err)
 			}

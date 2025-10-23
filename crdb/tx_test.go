@@ -101,24 +101,41 @@ func TestExecuteTx(t *testing.T) {
 // TestConfigureRetries verifies that the number of retries can be specified
 // via context.
 func TestConfigureRetries(t *testing.T) {
-	ctx := WithMaxRetries(context.Background(), 0)
+	// Test no retries (using WithNoRetries)
+	ctx := WithNoRetries(context.Background())
 	requireRetries(t, ctx, 0)
 
+	// Test single retry
 	ctx = WithMaxRetries(context.Background(), 1)
 	requireRetries(t, ctx, 1)
 
+	// Test default retries
 	ctx = context.Background()
 	requireRetries(t, ctx, defaultRetries)
 
+	// Test custom retry limit
 	ctx = WithMaxRetries(context.Background(), 123+defaultRetries)
 	requireRetries(t, ctx, 123+defaultRetries)
 
+	// Test exponential backoff policy
 	ctx = WithRetryPolicy(context.Background(), &ExpBackoffRetryPolicy{
 		RetryLimit: 10,
 		BaseDelay:  10,
 		MaxDelay:   1000,
 	})
 	requireRetries(t, ctx, 10)
+
+	// Test unlimited retries (0) - can't test easily without infinite loop,
+	// so we just verify the policy is set correctly
+	ctx = WithMaxRetries(context.Background(), 0)
+	p := getRetryPolicy(ctx)
+	if lbp, ok := p.(*LimitBackoffRetryPolicy); ok {
+		if lbp.RetryLimit != UnlimitedRetries {
+			t.Fatalf("expected UnlimitedRetries (0), got %d", lbp.RetryLimit)
+		}
+	} else {
+		t.Fatal("expected LimitBackoffRetryPolicy")
+	}
 }
 
 func requireRetries(t *testing.T, ctx context.Context, numRetries int) {
