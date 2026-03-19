@@ -95,7 +95,6 @@ Subpackages provide support for popular frameworks:
 
 | Package | Framework | Import |
 |---------|-----------|--------|
-| `crdbpgx` | pgx v4 (standalone) | `github.com/cockroachdb/cockroach-go/v2/crdb/crdbpgx` |
 | `crdbpgxv5` | pgx v5 (standalone) | `github.com/cockroachdb/cockroach-go/v2/crdb/crdbpgxv5` |
 | `crdbgorm` | GORM | `github.com/cockroachdb/cockroach-go/v2/crdb/crdbgorm` |
 | `crdbsqlx` | sqlx | `github.com/cockroachdb/cockroach-go/v2/crdb/crdbsqlx` |
@@ -118,7 +117,7 @@ return fmt.Errorf("failed: %w", err)
 The library detects retryable errors using the `SQLState() string` method,
 which is implemented by:
 - [`github.com/lib/pq`](https://github.com/lib/pq) (v1.10.6+)
-- [`github.com/jackc/pgx`](https://github.com/jackc/pgx) (database/sql driver mode)
+- [`github.com/jackc/pgx/v5/stdlib`](https://github.com/jackc/pgx) (database/sql driver mode)
 
 ## Note for Developers
 
