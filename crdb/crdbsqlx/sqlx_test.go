@@ -64,14 +64,14 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 var _ crdb.WriteSkewTest = sqlxConnSkewTest{}
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
-func (t sqlxConnSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
+func (t sqlxConnSkewTest) ExecuteTx(ctx context.Context, fn func(tx any) error) error {
 	return ExecuteTx(ctx, t.db, nil /* txOptions */, func(tx *sqlx.Tx) error {
 		return fn(tx)
 	})
 }
 
 // GetBalances is part of the crdb.WriteSkewTest interface.
-func (t sqlxConnSkewTest) GetBalances(ctx context.Context, txi interface{}) (int, int, error) {
+func (t sqlxConnSkewTest) GetBalances(ctx context.Context, txi any) (int, int, error) {
 	tx := txi.(*sqlx.Tx)
 	rows, err := tx.QueryContext(ctx, `SELECT balance FROM d.t WHERE acct IN (1, 2);`)
 	if err != nil {
@@ -94,7 +94,7 @@ func (t sqlxConnSkewTest) GetBalances(ctx context.Context, txi interface{}) (int
 
 // UpdateBalance is part of the crdb.WriteSkewInterface.
 func (t sqlxConnSkewTest) UpdateBalance(
-	ctx context.Context, txi interface{}, acct, delta int,
+	ctx context.Context, txi any, acct, delta int,
 ) error {
 	tx := txi.(*sqlx.Tx)
 	_, err := tx.ExecContext(ctx, `UPDATE d.t SET balance=balance+$1 WHERE acct=$2;`, delta, acct)
