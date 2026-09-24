@@ -49,12 +49,15 @@ const (
 	winUrlpat   = "https://binaries.cockroachdb.com/cockroach-%s.windows-6.2-amd64.zip"
 )
 
-// releaseDataURL is the location of the YAML file maintained by the
-// docs team where release information is encoded. This data is used
-// to render the public CockroachDB releases page. We leverage the
-// data in structured format to generate release information used
-// for testing purposes.
-const releaseDataURL = "https://raw.githubusercontent.com/cockroachdb/docs/main/src/current/_data/releases.yml"
+// releaseDataURL is the location of the CockroachDB release catalog, a
+// structured data source describing official CockroachDB releases. We
+// leverage this data to generate release information used for testing
+// purposes.
+const releaseDataURL = "https://binaries.cockroachdb.com/releases/v1/releases.yaml"
+
+// releaseCatalogSchemaVersion is the schema_version of the release catalog
+// document that this code knows how to read.
+const releaseCatalogSchemaVersion = 1
 
 // GetDownloadURL returns the URL of a CRDB download. It creates the URL for
 // downloading a CRDB binary for current runtime OS. If desiredVersion is
@@ -297,12 +300,21 @@ func GetDownloadFilenameWithPlatform(desiredVersion, goos string) (string, error
 	return filename, nil
 }
 
-// Release contains the information we extract from the YAML file in
+// releaseCatalog is the top-level structure of the release catalog document
+// served at releaseDataURL.
+type releaseCatalog struct {
+	SchemaVersion int       `yaml:"schema_version"`
+	Releases      []Release `yaml:"releases"`
+}
+
+// Release contains the information we extract from the release catalog at
 // `releaseDataURL`.
 type Release struct {
-	Name      string `yaml:"release_name"`
+	Name      string `yaml:"version"`
 	Withdrawn bool   `yaml:"withdrawn"`
-	CloudOnly bool   `yaml:"cloud_only"`
+	// Deprecated: the release catalog never lists cloud-only builds, so this
+	// is always false. It is kept so that code using the field still builds.
+	CloudOnly bool `yaml:"cloud_only"`
 }
 
 // getLatestStableVersionInfo returns the latest stable CRDB's download URL,
@@ -310,35 +322,58 @@ type Release struct {
 // on the runtime OS.
 // Note that it may return a withdrawn version, but the risk is low for local tests here.
 func getLatestStableVersionInfo() (string, string, error) {
-	resp, err := http.Get(releaseDataURL)
+	latestStableVersion, err := latestStableVersionFromCatalog(releaseDataURL)
 	if err != nil {
-		return "", "", fmt.Errorf("could not download release data: %w", err)
+		return "", "", err
+	}
+
+	downloadUrl := getDownloadUrlForVersionWithPlatform(latestStableVersion.String(), runtime.GOOS, runtime.GOARCH)
+
+	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion.String(), ".", "-")
+	return downloadUrl, latestStableVerFormatted, nil
+}
+
+// latestStableVersionFromCatalog downloads the release catalog document at
+// releaseURL and returns the latest stable (non-withdrawn, non-prerelease)
+// version found in it.
+func latestStableVersionFromCatalog(releaseURL string) (*version.Version, error) {
+	resp, err := http.Get(releaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("could not download release data: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var blob bytes.Buffer
-	if _, err := io.Copy(&blob, resp.Body); err != nil {
-		return "", "", fmt.Errorf("error reading response body: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf(
+			"error downloading release data from %s: %d (%s)",
+			releaseURL, resp.StatusCode, resp.Status,
+		)
 	}
 
-	var data []Release
-	if err := yaml.Unmarshal(blob.Bytes(), &data); err != nil { //nolint:yaml
-		return "", "", fmt.Errorf("failed to YAML parse release data: %w", err)
+	var blob bytes.Buffer
+	if _, err := io.Copy(&blob, resp.Body); err != nil {
+		return nil, fmt.Errorf("error reading response body: %w", err)
+	}
+
+	var catalog releaseCatalog
+	if err := yaml.Unmarshal(blob.Bytes(), &catalog); err != nil { //nolint:yaml
+		return nil, fmt.Errorf("failed to YAML parse release data: %w", err)
+	}
+
+	if catalog.SchemaVersion != releaseCatalogSchemaVersion {
+		return nil, fmt.Errorf(
+			"unsupported release catalog schema_version %d, expected %d",
+			catalog.SchemaVersion, releaseCatalogSchemaVersion,
+		)
 	}
 
 	latestStableVersion := version.MustParse("v0.0.0")
 
-	for _, r := range data {
+	for _, r := range catalog.Releases {
 		// We ignore versions that cannot be parsed; this should
 		// correspond to really old beta releases.
 		v, err := version.Parse(r.Name)
 		if err != nil {
-			continue
-		}
-
-		// Skip cloud-only releases, since they cannot be downloaded from
-		// binaries.cockroachdb.com.
-		if r.CloudOnly {
 			continue
 		}
 
@@ -357,10 +392,7 @@ func getLatestStableVersionInfo() (string, string, error) {
 		}
 	}
 
-	downloadUrl := getDownloadUrlForVersionWithPlatform(latestStableVersion.String(), runtime.GOOS, runtime.GOARCH)
-
-	latestStableVerFormatted := strings.ReplaceAll(latestStableVersion.String(), ".", "-")
-	return downloadUrl, latestStableVerFormatted, nil
+	return latestStableVersion, nil
 }
 
 func getDownloadUrlForVersionWithPlatform(version, goos, goarch string) string {
