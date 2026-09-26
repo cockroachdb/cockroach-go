@@ -103,7 +103,7 @@ func Execute(fn func() error) (err error) {
 // ExecuteCtxFunc represents a function that takes a context and variadic
 // arguments and returns an error. It's used with ExecuteCtx to enable retryable
 // operations with configurable parameters.
-type ExecuteCtxFunc func(context.Context, ...interface{}) error
+type ExecuteCtxFunc func(context.Context, ...any) error
 
 // ExecuteCtx runs fn and retries it as needed, respecting a retry policy
 // obtained from the context. It is used to add configurable retry handling to
@@ -134,7 +134,7 @@ type ExecuteCtxFunc func(context.Context, ...interface{}) error
 // `Cause() error` (github.com/pkg/errors) or `Unwrap() error` (Go 1.13+).
 // For example:
 //
-//	crdb.ExecuteCtx(ctx, func(ctx context.Context, args ...interface{}) error {
+//	crdb.ExecuteCtx(ctx, func(ctx context.Context, args ...any) error {
 //	    id := args[0].(int)
 //	    rows, err := db.QueryContext(ctx, "SELECT * FROM users WHERE id = $1", id)
 //	    if err != nil {
@@ -144,7 +144,7 @@ type ExecuteCtxFunc func(context.Context, ...interface{}) error
 //	    // ...
 //	    return nil
 //	}, userID)
-func ExecuteCtx(ctx context.Context, fn ExecuteCtxFunc, args ...interface{}) (err error) {
+func ExecuteCtx(ctx context.Context, fn ExecuteCtxFunc, args ...any) (err error) {
 	// establish the retry policy
 	retryPolicy := getRetryPolicy(ctx)
 	// set up the retry policy state
@@ -312,7 +312,7 @@ type stdlibTxnAdapter struct {
 var _ Tx = stdlibTxnAdapter{}
 
 // Exec is part of the tx interface.
-func (tx stdlibTxnAdapter) Exec(ctx context.Context, q string, args ...interface{}) error {
+func (tx stdlibTxnAdapter) Exec(ctx context.Context, q string, args ...any) error {
 	_, err := tx.tx.ExecContext(ctx, q, args...)
 	return err
 }

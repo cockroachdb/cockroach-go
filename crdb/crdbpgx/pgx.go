@@ -59,7 +59,7 @@ func (tx pgxTxAdapter) Rollback(ctx context.Context) error {
 }
 
 // Exec is part of the crdb.Tx interface.
-func (tx pgxTxAdapter) Exec(ctx context.Context, q string, args ...interface{}) error {
+func (tx pgxTxAdapter) Exec(ctx context.Context, q string, args ...any) error {
 	_, err := tx.tx.Exec(ctx, q, args...)
 	return err
 }

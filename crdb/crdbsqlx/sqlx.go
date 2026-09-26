@@ -45,7 +45,7 @@ type sqlxTxAdapter struct {
 
 var _ crdb.Tx = sqlxTxAdapter{}
 
-func (s sqlxTxAdapter) Exec(ctx context.Context, query string, args ...interface{}) error {
+func (s sqlxTxAdapter) Exec(ctx context.Context, query string, args ...any) error {
 	_, err := s.Tx.ExecContext(ctx, query, args...)
 	return err
 }

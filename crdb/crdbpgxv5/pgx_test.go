@@ -61,14 +61,14 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 var _ crdb.WriteSkewTest = pgxWriteSkewTest{}
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
-func (t pgxWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
+func (t pgxWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx any) error) error {
 	return ExecuteTx(ctx, t.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		return fn(tx)
 	})
 }
 
 // GetBalances is part of the crdb.WriteSkewTest interface.
-func (t pgxWriteSkewTest) GetBalances(ctx context.Context, txi interface{}) (int, int, error) {
+func (t pgxWriteSkewTest) GetBalances(ctx context.Context, txi any) (int, int, error) {
 	tx := txi.(pgx.Tx)
 	var rows pgx.Rows
 	rows, err := tx.Query(ctx, `SELECT balance FROM d.t WHERE acct IN (1, 2);`)
@@ -92,7 +92,7 @@ func (t pgxWriteSkewTest) GetBalances(ctx context.Context, txi interface{}) (int
 
 // UpdateBalance is part of the crdb.WriteSkewInterface.
 func (t pgxWriteSkewTest) UpdateBalance(
-	ctx context.Context, txi interface{}, acct, delta int,
+	ctx context.Context, txi any, acct, delta int,
 ) error {
 	tx := txi.(pgx.Tx)
 	_, err := tx.Exec(ctx, `UPDATE d.t SET balance=balance+$1 WHERE acct=$2;`, delta, acct)

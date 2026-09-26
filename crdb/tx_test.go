@@ -53,7 +53,7 @@ func TestExecuteCtx(t *testing.T) {
 		{"no args", 1, 3, false, nil},
 	}
 
-	fn := func(ctx context.Context, args ...interface{}) error {
+	fn := func(ctx context.Context, args ...any) error {
 		if len(args) == 0 {
 			_, err := db.ExecContext(ctx, `INSERT INTO test_retry VALUES (3)`)
 			return err
@@ -179,13 +179,13 @@ INSERT INTO d.t (acct, balance) VALUES (1, 100), (2, 100);
 	return err
 }
 
-func (t stdlibWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
+func (t stdlibWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx any) error) error {
 	return ExecuteTx(ctx, t.db, nil /* opts */, func(tx *sql.Tx) error {
 		return fn(tx)
 	})
 }
 
-func (t stdlibWriteSkewTest) GetBalances(ctx context.Context, txi interface{}) (int, int, error) {
+func (t stdlibWriteSkewTest) GetBalances(ctx context.Context, txi any) (int, int, error) {
 	tx := txi.(*sql.Tx)
 	var rows *sql.Rows
 	rows, err := tx.QueryContext(ctx, `SELECT balance FROM d.t WHERE acct IN (1, 2);`)
@@ -208,7 +208,7 @@ func (t stdlibWriteSkewTest) GetBalances(ctx context.Context, txi interface{}) (
 }
 
 func (t stdlibWriteSkewTest) UpdateBalance(
-	ctx context.Context, txi interface{}, acct, delta int,
+	ctx context.Context, txi any, acct, delta int,
 ) error {
 	tx := txi.(*sql.Tx)
 	_, err := tx.ExecContext(ctx, `UPDATE d.t SET balance=balance+$1 WHERE acct=$2;`, delta, acct)

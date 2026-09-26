@@ -22,7 +22,7 @@ import (
 // Tx abstracts the operations needed by ExecuteInTx so that different
 // frameworks (e.g. go's sql package, pgx, gorm) can be used with ExecuteInTx.
 type Tx interface {
-	Exec(context.Context, string, ...interface{}) error
+	Exec(context.Context, string, ...any) error
 	Commit(context.Context) error
 	Rollback(context.Context) error
 }

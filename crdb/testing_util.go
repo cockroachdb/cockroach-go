@@ -25,9 +25,9 @@ import (
 // to be written once and run for any framework supported by this library.
 type WriteSkewTest interface {
 	Init(context.Context) error
-	ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error
-	GetBalances(ctx context.Context, tx interface{}) (bal1, bal2 int, err error)
-	UpdateBalance(ctx context.Context, tx interface{}, acct, delta int) error
+	ExecuteTx(ctx context.Context, fn func(tx any) error) error
+	GetBalances(ctx context.Context, tx any) (bal1, bal2 int, err error)
+	UpdateBalance(ctx context.Context, tx any, acct, delta int) error
 }
 
 // ExecuteTxGenericTest represents the structure of a test for the ExecuteTx
@@ -47,7 +47,7 @@ func ExecuteTxGenericTest(ctx context.Context, framework WriteSkewTest) error {
 		errCh := make(chan error, 1)
 		go func() {
 			*iter = 0
-			errCh <- framework.ExecuteTx(ctx, func(tx interface{}) (retErr error) {
+			errCh <- framework.ExecuteTx(ctx, func(tx any) (retErr error) {
 				defer func() {
 					if retErr == nil {
 						return
@@ -103,7 +103,7 @@ func ExecuteTxGenericTest(ctx context.Context, framework WriteSkewTest) error {
 	}
 
 	var bal1, bal2 int
-	err := framework.ExecuteTx(ctx, func(txi interface{}) error {
+	err := framework.ExecuteTx(ctx, func(txi any) error {
 		var err error
 		bal1, bal2, err = framework.GetBalances(ctx, txi)
 		return err

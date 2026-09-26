@@ -98,14 +98,14 @@ func (t gormWriteSkewTest) Init(context.Context) error {
 }
 
 // ExecuteTx is part of the crdb.WriteSkewTest interface.
-func (t gormWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx interface{}) error) error {
+func (t gormWriteSkewTest) ExecuteTx(ctx context.Context, fn func(tx any) error) error {
 	return ExecuteTx(ctx, t.db, nil /* opts */, func(tx *gorm.DB) error {
 		return fn(tx)
 	})
 }
 
 // GetBalances is part of the crdb.WriteSkewTest interface.
-func (t gormWriteSkewTest) GetBalances(_ context.Context, txi interface{}) (int, int, error) {
+func (t gormWriteSkewTest) GetBalances(_ context.Context, txi any) (int, int, error) {
 	tx := txi.(*gorm.DB)
 
 	var accounts []Account
@@ -118,7 +118,7 @@ func (t gormWriteSkewTest) GetBalances(_ context.Context, txi interface{}) (int,
 
 // UpdateBalance is part of the crdb.WriteSkewInterface.
 func (t gormWriteSkewTest) UpdateBalance(
-	_ context.Context, txi interface{}, accountID, delta int,
+	_ context.Context, txi any, accountID, delta int,
 ) error {
 	tx := txi.(*gorm.DB)
 	var acc Account

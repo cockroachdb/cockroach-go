@@ -45,7 +45,7 @@ type gormTxAdapter struct {
 var _ crdb.Tx = gormTxAdapter{}
 
 // Exec is part of the crdb.Tx interface.
-func (tx gormTxAdapter) Exec(_ context.Context, q string, args ...interface{}) error {
+func (tx gormTxAdapter) Exec(_ context.Context, q string, args ...any) error {
 	return tx.db.Exec(q, args...).Error
 }
 
